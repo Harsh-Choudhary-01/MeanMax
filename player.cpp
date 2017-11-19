@@ -222,7 +222,7 @@ public:
     int score;
     int index;
     int rage;
-    Looter* looters;
+    Looter* looters[3];
     bool dead;
 
     Player(int index) {
@@ -648,15 +648,15 @@ public:
 // FUNCTIONS THAT NEED TO BE DECLARED AFTER
 
 Reaper* Player::getReaper() {
-    return dynamic_cast<Reaper*>(&looters[LOOTER_REAPER]);
+    return dynamic_cast<Reaper*>(looters[LOOTER_REAPER]);
 }
 
 Destroyer* Player::getDestroyer() {
-    return dynamic_cast<Destroyer*>(&looters[LOOTER_DESTROYER]);
+    return dynamic_cast<Destroyer*>(looters[LOOTER_DESTROYER]);
 }
 
 Doof* Player::getDoof() {
-    return dynamic_cast<Doof*>(&looters[LOOTER_DOOF]);
+    return dynamic_cast<Doof*>(looters[LOOTER_DOOF]);
 }
 
 bool Wreck::harvest(Player players[], SkillEffect skillEffects[]) {
@@ -714,10 +714,29 @@ Tanker* Collision::dead() {
 
 
 // ****************************************************************************************
-
+//GLOBAL VARIABLES
+Player* players[3];
+Unit* units[250];
+// ****************************************************************************************
 int main()
 {
-
+    for (int i = 0 ; i < 3; i++) {
+        players[i] = new Player(i);
+    }
+    for (int i = 0 ; i < 3; i++) {
+        for (int j = 0 ; j < 3; j++) {
+            Looter* looter;
+            if (j == LOOTER_REAPER)
+                looter = new Reaper(players[i], 0.0, 0.0);
+            else if (j == LOOTER_DESTROYER)
+                looter = new Destroyer(players[i], 0.0, 0.0);
+            else
+                looter = new Doof(players[i], 0.0, 0.0);
+            players[i]->looters[j] = looter;
+            units[unitsLENGTH] = looter;
+            unitsLENGTH++;
+        }
+    }
     // game loop
     while (true) {
         int myScore;
