@@ -3,6 +3,7 @@
 #include <string>
 #include <algorithm>
 #include <math.h>
+#include <vector>
 
 
 int skillEffectsLENGTH = 0;
@@ -194,29 +195,6 @@ Point WATERTOWN(0, 0);
 Collision NULL_COLLISION(1.0 + EPSILON);
 
 // ****************************************************************************************
-
-class SkillResult {
-public:
-    static constexpr int OK = 0;
-    static constexpr int NO_RAGE = 1;
-    static constexpr int TOO_FAR = 2;
-    Point target;
-    int code;
-
-    SkillResult(int x, int y) : target(x, y) {
-        code = OK;
-    }
-
-    int getX() {
-        return (int)target.x;
-    }
-
-    int getY() {
-        return (int)target.y;
-    }
-};
-
-// ****************************************************************************************
 class Player {
 public:
     int score;
@@ -254,7 +232,7 @@ public:
         this->water = water;
     }
 
-    bool harvest(Player players[], SkillEffect skillEffects[]);
+    bool harvest(Player* players[], std::vector<SkillEffect>& skillEffects);
 
 };
 
@@ -292,7 +270,7 @@ public:
     void thrust(Point* p, int power) {
         double distance = dist(this, p);
 
-        if (fabs(distance) <= EPSILON)
+        if (distance <= EPSILON)
             return;
 
         double coef = (power / mass) / distance;
@@ -301,9 +279,9 @@ public:
 
     }
 
-    bool isInDoofSkill(SkillEffect skillEffects[]);
+    bool isInDoofSkill(std::vector<SkillEffect>& skillEffects);
 
-    void adjust(SkillEffect skillEffects[]) {
+    void adjust(std::vector<SkillEffect>& skillEffects) {
         x = round(x);
         y = round(y);
 
@@ -317,7 +295,7 @@ public:
         }
     }
 
-    virtual Collision getCollision() { //todo make collision result param
+    virtual Collision getCollision() { //why not just return time and already know other stuff
         if (dist(this, &WATERTOWN) + radius >= MAP_RADIUS)
             return Collision(0, this);
 
@@ -506,13 +484,12 @@ public:
 
     Player* player;
 
-    Point* wantedThrustTarget;
+    Point wantedThrustTarget;
     int wantedThrustPower;
 
     Action attempt;
-    SkillResult* skillResult;
 
-    Looter(int type, Player* player, double x, double y) : Unit(type, x, y) {
+    Looter(int type, Player* player, double x, double y) : Unit(type, x, y), wantedThrustTarget(0, 0) {
         this->player = player;
         radius = LOOTER_RADIUS;
     }
@@ -523,10 +500,11 @@ public:
         return nullptr;
     }
 
-    void setWantedThrust(Point* target, int power) {
+    void setWantedThrust(double x, double y, int power) {
         if (power < 0)
             power = 0;
-        wantedThrustTarget = target;
+        wantedThrustTarget.x = x;
+        wantedThrustTarget.y = y;
         wantedThrustPower = power < MAX_THRUST ? power : MAX_THRUST;
     }
 };
@@ -594,7 +572,7 @@ public:
         this->order = order;
     }
 
-    virtual void apply(Unit units[]) {
+    virtual void apply(std::vector<Unit>& units) {
 
     }
 };
@@ -607,9 +585,8 @@ public:
         skillType = Skill::REAPER;
     }
 
-    void apply(Unit units[]) {
-        for (int i = 0 ; i < unitsLENGTH ; i++) {
-            Unit* u = &units[i];
+    void apply(std::vector<Unit>& units) {
+        for (Unit* u : units) {
             if (isInRange(this, u, radius + u->radius))
                 u->mass += REAPER_SKILL_MASS_BONUS;
         }
@@ -623,9 +600,8 @@ public:
         skillType = Skill ::DESTROYER;
     }
 
-    void apply(Unit units[]) {
-        for (int i = 0 ; i < unitsLENGTH; i++) {
-            Unit* u = &units[i];
+    void apply(std::vector<Unit>& units) {
+        for (Unit* u : units) {
             if (isInRange(this, u, radius + u->radius))
                 u->thrust(this, -DESTROYER_NITRO_GRENADE_POWER);
         }
@@ -639,7 +615,7 @@ public:
         skillType = Skill ::DOOF;
     }
 
-    void apply(Unit units[]) {
+    void apply(std::vector<Unit>& units) {
         //No need to do anything
     }
 };
@@ -659,7 +635,7 @@ Doof* Player::getDoof() {
     return dynamic_cast<Doof*>(looters[LOOTER_DOOF]);
 }
 
-bool Wreck::harvest(Player players[], SkillEffect skillEffects[]) {
+bool Wreck::harvest(Player players[], std::vector<SkillEffect>& skillEffects) {
     for (int i = 0 ; i < 3 ; i++) {
         Player* player = &(players[i]);
         if (isInRange(this, player->getReaper(), radius) && !player->getReaper()->isInDoofSkill(skillEffects)) {
@@ -671,9 +647,8 @@ bool Wreck::harvest(Player players[], SkillEffect skillEffects[]) {
     return water > 0;
 }
 
-bool Unit::isInDoofSkill(SkillEffect skillEffects[]) {
-    for (int i = 0; i < skillEffectsLENGTH; i++) {
-        SkillEffect* skill = &skillEffects[i];
+bool Unit::isInDoofSkill(std::vector<SkillEffect>& skillEffects) {
+    for (SkillEffect* skill : skillEffects) {
         if (skill->skillType == DOOF && isInRange(this, skill, skill->radius + radius))
             return true;
     }
@@ -685,6 +660,7 @@ SkillEffect* Looter::skill(Point* p) {
         player->rage -= skillCost;
         return skillImpl(p);
     }
+    return nullptr;
 }
 
 SkillEffect* Reaper::skillImpl(Point* p) {
@@ -706,7 +682,7 @@ Tanker* Collision::dead() {
     if (a->type == LOOTER_DESTROYER && b->type == TYPE_TANKER && b->mass < REAPER_SKILL_MASS_BONUS) {
         return dynamic_cast<Tanker*>(b);
     }
-    if (b->type == LOOTER_DESTROYER && a->type == TYPE_TANKER && b->mass < REAPER_SKILL_MASS_BONUS) {
+    if (b->type == LOOTER_DESTROYER && a->type == TYPE_TANKER && a->mass < REAPER_SKILL_MASS_BONUS) {
         return dynamic_cast<Tanker*>(a);
     }
     return nullptr;
@@ -716,7 +692,8 @@ Tanker* Collision::dead() {
 // ****************************************************************************************
 //GLOBAL VARIABLES
 Player* players[3];
-Unit* units[250];
+std::vector<Unit> units;
+std::vector<SkillEffect> skillEffects;
 // ****************************************************************************************
 int main()
 {
@@ -727,11 +704,12 @@ int main()
         for (int j = 0 ; j < 3; j++) {
             Looter* looter;
             if (j == LOOTER_REAPER)
-                looter = new Reaper(players[i], 0.0, 0.0);
+                units.insert(Reaper(players[i], 0.0, 0.0));
             else if (j == LOOTER_DESTROYER)
-                looter = new Destroyer(players[i], 0.0, 0.0);
+                units.insert(Destroyer(players[i], 0.0, 0.0));
             else
-                looter = new Doof(players[i], 0.0, 0.0);
+                units.insert(Doof(players[i], 0.0, 0.0));
+            looter = &units.back();
             players[i]->looters[j] = looter;
             units[unitsLENGTH] = looter;
             unitsLENGTH++;
