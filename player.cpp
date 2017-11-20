@@ -232,7 +232,7 @@ public:
         this->water = water;
     }
 
-    bool harvest(Player* players[], std::vector<SkillEffect>& skillEffects);
+    bool harvest(Player* players[], std::vector<SkillEffect*>& skillEffects);
 
 };
 
@@ -279,9 +279,9 @@ public:
 
     }
 
-    bool isInDoofSkill(std::vector<SkillEffect>& skillEffects);
+    bool isInDoofSkill(std::vector<SkillEffect*>& skillEffects);
 
-    void adjust(std::vector<SkillEffect>& skillEffects) {
+    void adjust(std::vector<SkillEffect*>& skillEffects) {
         x = round(x);
         y = round(y);
 
@@ -572,7 +572,7 @@ public:
         this->order = order;
     }
 
-    virtual void apply(std::vector<Unit>& units) {
+    virtual void apply(std::vector<Unit*>& units) {
 
     }
 };
@@ -585,7 +585,7 @@ public:
         skillType = Skill::REAPER;
     }
 
-    void apply(std::vector<Unit>& units) {
+    void apply(std::vector<Unit*>& units) {
         for (Unit* u : units) {
             if (isInRange(this, u, radius + u->radius))
                 u->mass += REAPER_SKILL_MASS_BONUS;
@@ -600,7 +600,7 @@ public:
         skillType = Skill ::DESTROYER;
     }
 
-    void apply(std::vector<Unit>& units) {
+    void apply(std::vector<Unit*>& units) {
         for (Unit* u : units) {
             if (isInRange(this, u, radius + u->radius))
                 u->thrust(this, -DESTROYER_NITRO_GRENADE_POWER);
@@ -615,7 +615,7 @@ public:
         skillType = Skill ::DOOF;
     }
 
-    void apply(std::vector<Unit>& units) {
+    void apply(std::vector<Unit*>& units) {
         //No need to do anything
     }
 };
@@ -635,9 +635,9 @@ Doof* Player::getDoof() {
     return dynamic_cast<Doof*>(looters[LOOTER_DOOF]);
 }
 
-bool Wreck::harvest(Player players[], std::vector<SkillEffect>& skillEffects) {
+bool Wreck::harvest(Player* players[], std::vector<SkillEffect*>& skillEffects) {
     for (int i = 0 ; i < 3 ; i++) {
-        Player* player = &(players[i]);
+        Player* player = players[i];
         if (isInRange(this, player->getReaper(), radius) && !player->getReaper()->isInDoofSkill(skillEffects)) {
             player->score += 1;
             water -= 1;
@@ -647,7 +647,7 @@ bool Wreck::harvest(Player players[], std::vector<SkillEffect>& skillEffects) {
     return water > 0;
 }
 
-bool Unit::isInDoofSkill(std::vector<SkillEffect>& skillEffects) {
+bool Unit::isInDoofSkill(std::vector<SkillEffect*>& skillEffects) {
     for (SkillEffect* skill : skillEffects) {
         if (skill->skillType == DOOF && isInRange(this, skill, skill->radius + radius))
             return true;
@@ -692,8 +692,108 @@ Tanker* Collision::dead() {
 // ****************************************************************************************
 //GLOBAL VARIABLES
 Player* players[3];
-std::vector<Unit> units;
-std::vector<SkillEffect> skillEffects;
+std::vector<Unit*> units;
+std::vector<Looter*> looters;
+std::vector<SkillEffect*> skillEffects;
+std::vector<Tanker*> tankers;
+std::vector<Tanker*> deadTankers;
+std::vector<Wreck> wrecks;
+// ****************************************************************************************
+//GLOBAL METHODS
+
+Collision getNextCollision() {
+    Collision result = NULL_COLLISION;
+
+    for (int i = 0; i < units.size(); ++i) {
+        Unit* unit = units[i];
+        Collision collision = unit->getCollision();
+
+        if (collision.t < result.t)
+            result = collision;
+
+        for (int j = i + 1; j < units.size(); ++j) {
+            collision = unit->getCollision(units[j]);
+
+            if (collision.t < result.t)
+                result = collision;
+        }
+    }
+    return result;
+}
+
+void playCollision(Collision& collision) {
+    if (collision.b == nullptr) {
+        collision.a->bounce();
+    }
+    else {
+        Tanker* dead = collision.dead();
+
+        if (dead != nullptr) {
+            deadTankers.push_back(dead);
+            tankers.erase(std::remove(tankers.begin(), tankers.end(), dead), tankers.end());
+            units.erase(std::remove(units.begin(), units.end(), (Unit*)dead), units.end());
+
+            Wreck wreck = dead->die();
+
+            if (wreck.radius != 0)
+                wrecks.push_back(wreck);
+
+        }
+    }
+}
+
+void updateGame() {
+    for (SkillEffect* effect : skillEffects) { //TODO: skillEffects need to be ordered
+        effect->apply(units);
+    }
+
+    for (Tanker* t : tankers)
+        t->play();
+
+    for (Player* player : players) {
+        for (Looter* looter : player->looters) {
+            if (looter->attempt == Action::MOVE)
+                looter->thrust(&looter->wantedThrustTarget, looter->wantedThrustPower);
+        }
+    }
+
+    double t = 0.0;
+
+    Collision collision = getNextCollision();
+
+    while (collision.t + t <= 1.0) {
+        double delta = collision.t;
+        for (Unit* unit : units) {
+            unit->move(delta);
+        }
+        t += collision.t;
+        playCollision(collision);
+        collision = getNextCollision();
+    }
+
+    double delta = 1.0 - t;
+    for (Unit* unit : units) {
+        unit->move(delta);
+    }
+
+    //UPDATE TANKER LIST lines 1393-1411 on ref
+
+    for (Unit* unit : units) {
+        unit->adjust(skillEffects);
+    }
+
+    for (Player* player : players) {
+        int increase = player->getDoof()->sing();
+        player->rage = MAX_RAGE < player->rage + increase ? MAX_RAGE : player->rage + increase;
+    }
+
+    for (Unit* unit : units) {
+        while (unit->mass >= REAPER_SKILL_MASS_BONUS)
+            unit->mass -= REAPER_SKILL_MASS_BONUS;
+    }
+
+    //Remove dead skill effects. Need to design this in a way apply/undo moves work
+}
 // ****************************************************************************************
 int main()
 {
@@ -703,16 +803,20 @@ int main()
     for (int i = 0 ; i < 3; i++) {
         for (int j = 0 ; j < 3; j++) {
             Looter* looter;
-            if (j == LOOTER_REAPER)
-                units.insert(Reaper(players[i], 0.0, 0.0));
-            else if (j == LOOTER_DESTROYER)
-                units.insert(Destroyer(players[i], 0.0, 0.0));
-            else
-                units.insert(Doof(players[i], 0.0, 0.0));
-            looter = &units.back();
+            if (j == LOOTER_REAPER) {
+                looter = new Reaper(players[i], 0.0, 0.0);
+                units.push_back(looter);
+            }
+            else if (j == LOOTER_DESTROYER) {
+                looter = new Destroyer(players[i], 0.0, 0.0);
+                units.push_back(looter);
+            }
+            else {
+                looter = new Doof(players[i], 0.0, 0.0);
+                units.push_back(looter);
+            }
+            looters.push_back(looter);
             players[i]->looters[j] = looter;
-            units[unitsLENGTH] = looter;
-            unitsLENGTH++;
         }
     }
     // game loop
