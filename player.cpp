@@ -4,10 +4,8 @@
 #include <algorithm>
 #include <math.h>
 #include <vector>
-
-
-int skillEffectsLENGTH = 0;
-int unitsLENGTH = 0;
+#include <unordered_set>
+#include <set>
 
 constexpr double MAP_RADIUS = 6000.0;
 int TANKERS_BY_PLAYER;
@@ -76,8 +74,13 @@ constexpr double EPSILON = 0.00001;
 constexpr double MIN_IMPULSE = 30.0;
 constexpr double IMPULSE_COEFF = 0.5;
 
+constexpr int DEPTH = 4; //TODO: refactor to put DEPTH in usage
+constexpr int POOL = 50;
+constexpr double MUTATION = 2;
+
 // Global first free id for all elements on the map 
 int GLOBAL_ID = 0;
+int temp_ID = 0;
 
 class Point;
 class Wreck;
@@ -103,6 +106,38 @@ enum Action {
     SKILL, MOVE, WAIT
 };
 
+// ***********************************************************
+
+static unsigned int g_seed;
+inline void fast_srand(int seed) {
+    //Seed the generator
+    g_seed = seed;
+}
+inline int fastrand() {
+    //fastrand routine returns one integer, similar output value range as C lib.
+    g_seed = (214013*g_seed+2531011);
+    return (g_seed>>16)&0x7FFF;
+}
+inline int fastRandInt(int maxSize) {
+    return fastrand() % maxSize;
+}
+inline int fastRandInt(int a, int b) {
+    return(a + fastRandInt(b - a));
+}
+inline double fastRandDouble() {
+    return static_cast<double>(fastrand()) / 0x7FFF;
+}
+inline double fastRandDouble(double a, double b) {
+    return a + (static_cast<double>(fastrand()) / 0x7FFF)*(b-a);
+}
+
+// ****************************************************************************************
+//SAVED VARIABLES
+std::vector<SkillEffect*> savedSkillEffects;
+std::vector<SkillEffect*> skillsToDelete;
+std::vector<Tanker*> savedTankers;
+std::vector<Wreck*> savedWrecks;
+std::vector<Wreck*> wrecksToDelete;
 // ****************************************************************************************
 
 //TODO: might need to add equals and hash function for class Point
@@ -151,8 +186,8 @@ void moveTo(Point* u1, Point* u2, double distance) {
         return;
     }
 
-    double dx = u1->x - u2->x;
-    double dy = u1->y - u2->y;
+    double dx = u2->x - u1->x;
+    double dy = u2->y - u1->y;
     double coef = distance / d;
 
     u1->x += dx * coef;
@@ -162,7 +197,49 @@ void moveTo(Point* u1, Point* u2, double distance) {
 inline bool isInRange(Point* p1, Point* p2, double range) {
     return p1 != p2 && dist(p1, p2) <= range;
 }
+// ****************************************************************************************
+class SkillEffect : public Point {
+public:
+    int id;
+    int type;
+    double radius;
+    int duration;
+    int order;
+    bool known;
+    Skill skillType;
+    Looter* looter;
+    int savedDuration;
 
+    SkillEffect(int type, double x, double y, double radius, int duration, int order, Looter* looter) : Point(x, y) {
+        id = GLOBAL_ID++;
+        this->type = type;
+        this->radius = radius;
+        this->duration = duration;
+        this->looter = looter;
+        this->order = order;
+    }
+
+    virtual void apply(std::vector<Unit*>& units) {
+
+    }
+
+    void save() {
+        savedDuration = duration;
+    }
+
+    void reset() {
+        duration = savedDuration;
+    }
+};
+// ****************************************************************************************
+struct SkillEffectComparator {
+    bool operator()(SkillEffect* obj1, SkillEffect* obj2) const {
+        int order = obj1->order - obj2->order;
+        if (order != 0)
+            return order < 0;
+        return obj1->id - obj2->id < 0;
+    }
+};
 // ****************************************************************************************
 class Collision {
 public:
@@ -202,6 +279,7 @@ public:
     int rage;
     Looter* looters[3];
     bool dead;
+    int saveValues[2];
 
     Player(int index) {
         this->index = index;
@@ -210,6 +288,10 @@ public:
     void kill() {
         dead = true;
     }
+
+    void save();
+
+    void reset();
 
     Reaper* getReaper();
 
@@ -225,6 +307,7 @@ public:
     int water;
     bool known;
     Player* player;
+    int savedWater;
 
     Wreck(double x, double y, int water, double radius) : Point(x, y) {
         id = GLOBAL_ID++;
@@ -232,7 +315,15 @@ public:
         this->water = water;
     }
 
-    bool harvest(Player* players[], std::vector<SkillEffect*>& skillEffects);
+    bool harvest(Player* players[], std::set<SkillEffect*, SkillEffectComparator>& skillEffects);
+
+    void save() {
+        savedWater = water;
+    }
+
+    void reset() {
+        water = savedWater;
+    }
 
 };
 
@@ -249,6 +340,7 @@ public:
     double mass;
     double friction;
     bool known;
+    double saveValues[5];
 
     Unit(int type , double x, double y) : Point(x, y) {
         id = GLOBAL_ID++;
@@ -267,6 +359,22 @@ public:
         return sqrt(vx * vx + vy * vy);
     }
 
+    virtual void save() {
+        saveValues[0] = x;
+        saveValues[1] = y;
+        saveValues[2] = vx;
+        saveValues[3] = vy;
+        saveValues[4] = mass;
+    }
+
+    virtual void reset() {
+        x = saveValues[0];
+        y = saveValues[1];
+        vx = saveValues[2];
+        vy = saveValues[3];
+        mass = saveValues[4];
+    }
+
     void thrust(Point* p, int power) {
         double distance = dist(this, p);
 
@@ -279,9 +387,9 @@ public:
 
     }
 
-    bool isInDoofSkill(std::vector<SkillEffect*>& skillEffects);
+    bool isInDoofSkill(std::set<SkillEffect*, SkillEffectComparator>& skillEffects);
 
-    void adjust(std::vector<SkillEffect*>& skillEffects) {
+    void adjust(std::set<SkillEffect*, SkillEffectComparator>& skillEffects) {
         x = round(x);
         y = round(y);
 
@@ -349,6 +457,8 @@ public:
             return NULL_COLLISION;
 
         double t = (-b - sqrt(delta)) / (2.0 * a);
+
+        bool test = t < EPSILON;
 
         if (t <= 0.0)
             return NULL_COLLISION;
@@ -442,6 +552,7 @@ public:
     int size;
     Player* player;
     bool killed;
+    int savedWater;
 
     Tanker(int size, Player* player) : Unit(TYPE_TANKER, 0.0, 0.0) {
         this->player = player;
@@ -452,11 +563,23 @@ public:
         radius = TANKER_RADIUS_BASE + TANKER_RADIUS_BY_SIZE * size;
     }
 
-    Wreck die() {
+    Wreck* die() {
         if (dist(this, &WATERTOWN) >= MAP_RADIUS)
-            return Wreck(0, 0, 0, 0);
+            return nullptr;
 
-        return Wreck(round(x), round(y), water, radius);
+        Wreck* temp = new Wreck(round(x), round(y), water, radius);
+        wrecksToDelete.push_back(temp);
+        return temp;
+    }
+
+    void save() {
+        Unit::save();
+        savedWater = water;
+    }
+
+    void reset() {
+        Unit::reset();
+        water = savedWater;
     }
 
     bool isFull() {
@@ -506,6 +629,7 @@ public:
         wantedThrustTarget.x = x;
         wantedThrustTarget.y = y;
         wantedThrustPower = power < MAX_THRUST ? power : MAX_THRUST;
+        attempt = Action::MOVE;
     }
 };
 // ****************************************************************************************
@@ -551,31 +675,6 @@ public:
         return (int)floor(speed() * DOOF_RAGE_COEF);
     }
 };
-// ****************************************************************************************
-class SkillEffect : public Point {
-public:
-    int id;
-    int type;
-    double radius;
-    int duration;
-    int order;
-    bool known;
-    Skill skillType;
-    Looter* looter;
-
-    SkillEffect(int type, double x, double y, double radius, int duration, int order, Looter* looter) : Point(x, y) {
-        id = GLOBAL_ID++;
-        this->type = type;
-        this->radius = radius;
-        this->duration = duration;
-        this->looter = looter;
-        this->order = order;
-    }
-
-    virtual void apply(std::vector<Unit*>& units) {
-
-    }
-};
 
 // ****************************************************************************************
 class ReaperSkillEffect : public SkillEffect {
@@ -586,6 +685,7 @@ public:
     }
 
     void apply(std::vector<Unit*>& units) {
+        duration -= 1;
         for (Unit* u : units) {
             if (isInRange(this, u, radius + u->radius))
                 u->mass += REAPER_SKILL_MASS_BONUS;
@@ -601,6 +701,7 @@ public:
     }
 
     void apply(std::vector<Unit*>& units) {
+        duration -= 1;
         for (Unit* u : units) {
             if (isInRange(this, u, radius + u->radius))
                 u->thrust(this, -DESTROYER_NITRO_GRENADE_POWER);
@@ -616,6 +717,7 @@ public:
     }
 
     void apply(std::vector<Unit*>& units) {
+        duration -= 1;
         //No need to do anything
     }
 };
@@ -635,7 +737,7 @@ Doof* Player::getDoof() {
     return dynamic_cast<Doof*>(looters[LOOTER_DOOF]);
 }
 
-bool Wreck::harvest(Player* players[], std::vector<SkillEffect*>& skillEffects) {
+bool Wreck::harvest(Player* players[], std::set<SkillEffect*, SkillEffectComparator>& skillEffects) {
     for (int i = 0 ; i < 3 ; i++) {
         Player* player = players[i];
         if (isInRange(this, player->getReaper(), radius) && !player->getReaper()->isInDoofSkill(skillEffects)) {
@@ -647,7 +749,7 @@ bool Wreck::harvest(Player* players[], std::vector<SkillEffect*>& skillEffects) 
     return water > 0;
 }
 
-bool Unit::isInDoofSkill(std::vector<SkillEffect*>& skillEffects) {
+bool Unit::isInDoofSkill(std::set<SkillEffect*, SkillEffectComparator>& skillEffects) {
     for (SkillEffect* skill : skillEffects) {
         if (skill->skillType == DOOF && isInRange(this, skill, skill->radius + radius))
             return true;
@@ -658,7 +760,9 @@ bool Unit::isInDoofSkill(std::vector<SkillEffect*>& skillEffects) {
 SkillEffect* Looter::skill(Point* p) {
     if (player->rage >= skillCost && dist(this, p) <= skillRange) {
         player->rage -= skillCost;
-        return skillImpl(p);
+        SkillEffect* effect = skillImpl(p);
+        skillsToDelete.push_back(effect);
+        return effect;
     }
     return nullptr;
 }
@@ -688,16 +792,71 @@ Tanker* Collision::dead() {
     return nullptr;
 }
 
+void Player::save() {
+    saveValues[0] = score;
+    saveValues[1] = rage;
+    for (Looter* looter : looters)
+        looter->save();
+}
+
+void Player::reset() {
+    score = saveValues[0];
+    rage =saveValues[1];
+    for (Looter* looter : looters)
+        looter->reset();
+}
+
+struct SkillEffectHasher {
+    size_t operator()(const SkillEffect& obj) const {
+        return (31 + obj.id);
+    }
+};
+
+struct TankerHasher {
+    size_t operator()(const Tanker& obj) const {
+        return (31 + obj.id);
+    }
+};
+
+struct TankerComparator {
+    bool operator()(const Tanker& obj1, const Tanker& obj2) const {
+        return obj1.id == obj2.id;
+    }
+};
+
+struct UnitHasher {
+    size_t operator()(const Unit* obj) const {
+        return (31 + obj->id);
+    }
+};
+
+struct UnitComparator {
+    bool operator()(const Unit* obj1, const Unit* obj2) const {
+        return obj1->id == obj2->id;
+    }
+};
+
+struct WreckHasher {
+    size_t operator()(const Wreck& obj) const {
+        return (31 + obj.id);
+    }
+};
+
+struct WreckComparator {
+    bool operator()(const Wreck& obj1, const Wreck& obj2) const {
+        return obj1.id == obj2.id;
+    }
+};
+
 
 // ****************************************************************************************
 //GLOBAL VARIABLES
 Player* players[3];
 std::vector<Unit*> units;
 std::vector<Looter*> looters;
-std::vector<SkillEffect*> skillEffects;
+std::set<SkillEffect*, SkillEffectComparator> skillEffects;
 std::vector<Tanker*> tankers;
-std::vector<Tanker*> deadTankers;
-std::vector<Wreck> wrecks;
+std::vector<Wreck*> wrecks;
 // ****************************************************************************************
 //GLOBAL METHODS
 
@@ -729,15 +888,17 @@ void playCollision(Collision& collision) {
         Tanker* dead = collision.dead();
 
         if (dead != nullptr) {
-            deadTankers.push_back(dead);
             tankers.erase(std::remove(tankers.begin(), tankers.end(), dead), tankers.end());
             units.erase(std::remove(units.begin(), units.end(), (Unit*)dead), units.end());
 
-            Wreck wreck = dead->die();
+            Wreck* wreck = dead->die();
 
-            if (wreck.radius != 0)
+            if (wreck != nullptr)
                 wrecks.push_back(wreck);
 
+        }
+        else {
+            collision.a->bounce(collision.b);
         }
     }
 }
@@ -777,6 +938,29 @@ void updateGame() {
     }
 
     //UPDATE TANKER LIST lines 1393-1411 on ref
+    std::unordered_set<Unit*, UnitHasher, UnitComparator> tankersToRemove;
+
+    for (Tanker* tanker : tankers) {
+        double distance = dist(tanker, &WATERTOWN);
+        bool full = tanker->isFull();
+
+        if (distance <= WATERTOWN_RADIUS && !full) {
+            tanker->water += 1;
+            tanker->mass += TANKER_MASS_BY_WATER;
+        }
+        else if (distance >= TANKER_SPAWN_RADIUS + tanker->radius && full)
+            tankersToRemove.insert(tanker);
+    }
+
+    units.erase(std::remove_if(units.begin(), units.end(),
+                               [&tankersToRemove](Unit* o) { return tankersToRemove.count(o); }), units.end());
+
+    tankers.erase(std::remove_if(tankers.begin(), tankers.end(),
+                                 [&tankersToRemove](Tanker* o) { return tankersToRemove.count(o); }), tankers.end());
+
+    wrecks.erase(std::remove_if(wrecks.begin(), wrecks.end(),
+                                [](Wreck* o) { bool alive = o->harvest(players, skillEffects);
+                                    return !alive;}), wrecks.end());
 
     for (Unit* unit : units) {
         unit->adjust(skillEffects);
@@ -792,8 +976,249 @@ void updateGame() {
             unit->mass -= REAPER_SKILL_MASS_BONUS;
     }
 
+    for (auto it = skillEffects.begin(); it != skillEffects.end();) {
+        if ((*it)->duration <= 0)
+            it = skillEffects.erase(it);
+        else
+            ++it;
+    }
+
     //Remove dead skill effects. Need to design this in a way apply/undo moves work
 }
+
+
+void save() {
+    skillsToDelete.clear();
+    wrecksToDelete.clear();
+    savedSkillEffects.clear();
+    savedTankers.clear();
+    savedWrecks.clear();
+
+    temp_ID = GLOBAL_ID;
+
+    for (SkillEffect* effect : skillEffects) {
+        savedSkillEffects.push_back(effect);
+        effect->save();
+    }
+
+    for (Tanker* tanker : tankers) {
+        savedTankers.push_back(tanker);
+        tanker->save();
+    }
+
+    for (Wreck* wreck : wrecks) {
+        savedWrecks.push_back(wreck);
+        wreck->save();
+    }
+
+    for (Player* player : players)
+        player->save();
+
+}
+
+void reset() {
+
+    units.resize(9);
+
+    skillEffects.clear();
+    tankers.clear();
+    wrecks.clear();
+
+    for (SkillEffect* effect : skillsToDelete)
+        delete effect;
+
+    for (Wreck* wreck : wrecksToDelete)
+        delete wreck;
+
+    for (SkillEffect* effect : savedSkillEffects) {
+        skillEffects.insert(effect);
+        effect->reset();
+    }
+
+    for (Tanker* tanker : savedTankers) {
+        tankers.push_back(tanker);
+        tanker->reset();
+    }
+
+    for (Wreck* wreck : savedWrecks) {
+        wrecks.push_back(wreck);
+        wreck->reset();
+    }
+
+    for (Player* player : players)
+        player->reset();
+
+    GLOBAL_ID = temp_ID;
+}
+
+
+void heuristic(Player* player) { //Sets player moves based on heuristic
+
+}
+
+int scoreState() {
+    return 0;
+}
+
+void print() {
+    for (int i = 0 ; i < 3 ; i++)
+        std::cout << players[i]->score << std::endl;
+    for (int i = 0 ; i < 3; i++)
+        std::cout << players[i]->rage << std::endl;
+    for (Unit* unit : units)
+        std::cout << unit->id << " " << unit->type << " " << unit->mass
+                  << " " << unit->radius << " " << unit->x << " " << unit->y
+                  << " " << unit->vx << " " << unit->vy << std::endl;
+
+}
+
+class Move {
+public:
+    int moveType;
+    int x;
+    int y;
+
+    Move() {
+
+    }
+
+    void randomize() {
+        x = fastRandInt(-6000, 6000);
+        y = fastRandInt(-6000, 6000);
+    }
+
+    void mutate(double amplitude) {
+        //X
+        double minAmp = x - 1000 * amplitude;
+        double maxAmp = x + 1000 * amplitude;
+        if (minAmp < -6000)
+            minAmp = -6000;
+        if (maxAmp > 6000)
+            maxAmp = 6000;
+        x = fastRandInt(minAmp, maxAmp);
+        
+        //Y
+        minAmp = y - 1000 * amplitude;
+        maxAmp = y + 1000 * amplitude;
+        if (minAmp < -6000)
+            minAmp = -6000;
+        if (maxAmp > 6000)
+            maxAmp = 6000;
+        y = fastRandInt(minAmp, maxAmp);
+    }
+
+};
+
+
+class Solution {
+public:
+    Move movesReaper[4];
+    Move movesDestroyer[4];
+    Move movesDoof[4];
+    int score;
+
+    Solution() {
+
+    }
+
+    void randomize() {
+        for (Move& move : movesReaper)
+            move.randomize();
+        for (Move& move : movesDestroyer)
+            move.randomize();
+        for (Move& move : movesDoof)
+            move.randomize();
+    }
+
+    Solution* mutate(double amplitude) {
+        Solution* solution = copy();
+        for (Move& move : solution->movesReaper)
+            move.mutate(amplitude);
+        for (Move& move : solution->movesDestroyer)
+            move.mutate(amplitude);
+        for (Move& move : solution->movesDoof)
+            move.mutate(amplitude);
+        return solution;
+    }
+
+    Solution* merge(Solution* other) {
+        Solution* child = new Solution();
+
+        for (int i = 0 ; i < 4; i++) {
+            if (fastRandInt(2)) {
+                child->movesReaper[i] = movesReaper[i];
+                child->movesDestroyer[i] = movesDestroyer[i];
+                child->movesDoof[i] = movesDoof[i];
+            }
+            else {
+                child->movesReaper[i] = other->movesReaper[i];
+                child->movesDestroyer[i] = other->movesDestroyer[i];
+                child->movesDoof[i] = other->movesDoof[i];
+            }
+        }
+
+        return child;
+    }
+
+    void mergeInPlace(Solution* other) {
+        for (int i = 0 ; i < 4; i++) {
+            if (fastRandInt(2)) {
+                movesReaper[i] = other->movesReaper[i];
+                movesDestroyer[i] = other->movesDestroyer[i];
+                movesDoof[i] = other->movesDoof[i];
+            }
+        }
+    }
+    
+    Solution* copy() {
+        Solution* copy = new Solution();
+        for (int i = 0 ; i < 4; i++) {
+            copy->movesReaper[i].x = movesReaper[i].x;
+            copy->movesReaper[i].y = movesReaper[i].y;
+            //copy->movesReaper[i].moveType = movesReaper[i].moveType;
+
+            copy->movesDestroyer[i].x = movesDestroyer[i].x;
+            copy->movesDestroyer[i].y = movesDestroyer[i].y;
+            //copy->movesDestroyer[i].moveType = movesDestroyer[i].moveType;
+
+            copy->movesDoof[i].x = movesDoof[i].x;
+            copy->movesDoof[i].y = movesDoof[i].y;
+            //copy->movesDoof[i].moveType = movesDoof[i].moveType;
+        }
+        return copy;
+    }
+
+    void copy(Solution* other) {
+        for (int i = 0 ; i < 4; i++) {
+            movesReaper[i].x = other->movesReaper[i].x;
+            movesReaper[i].y = other->movesReaper[i].y;
+            //movesReaper[i].moveType = other->movesReaper[i].moveType;
+
+            movesDestroyer[i].x = other->movesDestroyer[i].x;
+            movesDestroyer[i].y = other->movesDestroyer[i].y;
+            //movesDestroyer[i].moveType = other->movesDestroyer[i].moveType;
+
+            movesDoof[i].x = other->movesDoof[i].x;
+            movesDoof[i].y = other->movesDoof[i].y;
+            //movesDoof[i].moveType = other->movesDoof[i].moveType;
+        }
+    }
+
+
+    void simulate() {
+        for (int i = 0; i < 4; i++) {
+            players[0]->looters[0]->setWantedThrust(movesReaper[i].x, movesReaper[i].y, 300);
+            players[0]->looters[1]->setWantedThrust(movesDestroyer[i].x, movesDestroyer[i].y, 300);
+            players[0]->looters[2]->setWantedThrust(movesDoof[i].x, movesDoof[i].y, 300);
+            heuristic(players[1]);
+            heuristic(players[2]);
+            updateGame();
+        }
+        score = scoreState();
+        reset();
+    }
+
+};
 // ****************************************************************************************
 int main()
 {
@@ -819,8 +1244,24 @@ int main()
             players[i]->looters[j] = looter;
         }
     }
+
+    Solution* best = new Solution();
     // game loop
     while (true) {
+        // ****************************************************************************************
+        //Resetting state
+        GLOBAL_ID = 0;
+        for (SkillEffect* skillEffect : skillEffects)
+            delete skillEffect;
+        for (Tanker* tanker : tankers)
+            delete tanker;
+        for (Wreck* wreck : wrecks)
+            delete wreck;
+        skillEffects.clear();
+        tankers.clear();
+        wrecks.clear();
+        units.resize(9);
+        // ****************************************************************************************
         int myScore;
         std::cin >> myScore; std::cin.ignore();
         int enemyScore1;
@@ -835,6 +1276,24 @@ int main()
         std::cin >> enemyRage2; std::cin.ignore();
         int unitCount;
         std::cin >> unitCount; std::cin.ignore();
+
+        /*
+        std::cerr << myScore << std::endl;
+        std::cerr << enemyScore1 << std::endl;
+        std::cerr << enemyScore2 << std::endl;
+        std::cerr << myRage << std::endl;
+        std::cerr << enemyRage1 << std::endl;
+        std::cerr << enemyRage2 << std::endl;
+        std::cerr << unitCount << std::endl;
+         */
+
+        players[0]->score = myScore;
+        players[0]->rage = myRage;
+        players[1]->score = enemyScore1;
+        players[1]->rage = enemyRage1;
+        players[2]->score = enemyScore2;
+        players[2]->rage = enemyRage2;
+        int tempID = 0;
         for (int i = 0; i < unitCount; i++) {
             int unitId;
             int unitType;
@@ -848,13 +1307,175 @@ int main()
             int extra;
             int extra2;
             std::cin >> unitId >> unitType >> player >> mass >> radius >> x >> y >> vx >> vy >> extra >> extra2; std::cin.ignore();
+            /*
+            std::cerr << unitId << " " << unitType << " " << player << " " << mass << " " << radius << " " << x << " " <<
+                      y << " " << vx << " " << vy << " " << extra << " " << extra2 << std::endl;
+            */
+            tempID = unitId < tempID ? tempID : unitId;
+            if (unitType < 3) {
+                players[player]->looters[unitType]->mass = mass;
+                players[player]->looters[unitType]->x = x;
+                players[player]->looters[unitType]->y = y;
+                players[player]->looters[unitType]->vx = vx;
+                players[player]->looters[unitType]->vy = vy;
+                players[player]->looters[unitType]->radius = radius;
+                players[player]->looters[unitType]->id = unitId;
+            }
+            else if (unitType == 3) {
+                Tanker* tanker = new Tanker(extra2, players[player]);
+                tanker->mass = mass;
+                tanker->water = extra;
+                tanker->size = extra2;
+                tanker->radius = radius;
+                tanker->x = x;
+                tanker->y = y;
+                tanker->vx = vx;
+                tanker->vy = vy;
+                tanker->id = unitId;
+                tankers.push_back(tanker);
+                units.push_back(tanker);
+            }
+            else if (unitType == 4) {
+                Wreck* wreck = new Wreck(x, y, extra, radius);
+                wreck->id = unitId;
+                wrecks.push_back(wreck);
+            }
+            else if (unitType == 5) { //JUST CREATE SKILLS THROUGH YOUR PLAYER. DOESN'T MATTER
+
+                SkillEffect* skillEffect = new ReaperSkillEffect(TYPE_REAPER_SKILL_EFFECT, x, y,
+                                                                 REAPER_SKILL_RADIUS, REAPER_SKILL_DURATION,
+                                                                 REAPER_SKILL_ORDER, players[0]->getReaper());
+                skillEffect->duration = extra;
+                skillEffect->id = unitId;
+                skillEffects.insert(skillEffect);
+            }
+            else {
+                SkillEffect* skillEffect = new DoofSkillEffect(TYPE_DOOF_SKILL_EFFECT, x , y, DOOF_SKILL_RADIUS,
+                                                               DOOF_SKILL_DURATION, DOOF_SKILL_ORDER, players[0]->getDoof());
+                skillEffect->duration = extra;
+                skillEffect->id = unitId;
+                skillEffects.insert(skillEffect);
+            }
         }
+        GLOBAL_ID = tempID + 1;
+
+        //TODO: use previous GA solution and modify the last turn randomly
+        // once used delete best
+        delete best;
+
+        Solution** pool = new Solution*[POOL];
+        Solution** newPool = new Solution*[POOL];
+        Solution** temp;
+        int counter = POOL;
+
+        best = new Solution();
+        Solution* sol = new Solution();
+        sol->randomize();
+
+        sol->simulate();
+        pool[0] = sol;
+
+        best->copy(sol);
+
+        Solution* tempBest = sol;
+
+        //TODO: Fill 1/5 pool with mutations of last turn if not turn 0
+
+        for (int i = 0; i < POOL; ++i) { //Fill rest with totally random
+            Solution* solution = new Solution();
+            solution->randomize();
+
+            solution->simulate();
+
+            if (solution->score > tempBest->score)
+                tempBest = solution;
+
+            pool[i] = solution;
+        }
+
+        if (tempBest->score > best->score)
+            best->copy(tempBest);
+
+        tempBest = best;
+
+        bool continueLoop = true;
+
+        int poolFE;
+        while (continueLoop) {
+
+            Solution* solution = new Solution();
+            solution->copy(tempBest);
+            solution->mutate(.5);
+            solution->simulate();
+
+            if (solution->score > tempBest->score)
+                tempBest = solution;
+
+            newPool[0] = solution;
+
+            counter += 1;
+
+            poolFE = 1;
+
+            while (poolFE < POOL && continueLoop) {
+                int aIndex = fastRandInt(POOL);
+                int bIndex;
+
+                do {
+                    bIndex = fastRandInt(POOL);
+                } while (bIndex == aIndex);
+
+                int firstIndex = pool[aIndex]->score > pool[bIndex]->score ? aIndex : bIndex;
+
+                do {
+                    aIndex = fastRandInt(POOL);
+                } while (aIndex == firstIndex);
+
+                do {
+                    bIndex = fastRandInt(POOL);
+                } while (bIndex == aIndex || bIndex == firstIndex);
+
+                int secondIndex = pool[aIndex]->score > pool[bIndex]->score ? aIndex : bIndex;
+
+                Solution* child = pool[firstIndex]->merge(pool[secondIndex]);
+
+                if (!fastRandInt(MUTATION))
+                    child->mutate(.2);
+
+                child->simulate();
+
+                if (child->score > tempBest->score)
+                    tempBest = child;
+
+                newPool[poolFE++] = child;
+
+                counter += 1;
+            }
+
+            for (int i = 0 ; i < POOL; ++i)
+                delete pool[i];
+
+            temp = pool;
+            pool = newPool;
+            newPool = temp;
+
+            if (tempBest->score > best->score) {
+                best->copy(tempBest);
+            }
+
+            tempBest = best;
+
+        }
+
 
         // Write an action using cout. DON'T FORGET THE "<< endl"
         // To debug: cerr << "Debug messages..." << endl;
 
-        std::cout << "WAIT" << std::endl;
-        std::cout << "WAIT" << std::endl;
-        std::cout << "WAIT" << std::endl;
+//        std::cout << "0 0 300" << std::endl;
+//        if (players[0]->rage >= 60)
+//            std::cout << "SKILL 0 0" << std::endl;
+//        else
+//            std::cout << "0 0 300" << std::endl;
+//        std::cout << "0 0 300" << std::endl;
     }
 }
