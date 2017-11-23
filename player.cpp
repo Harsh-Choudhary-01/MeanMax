@@ -1,3 +1,4 @@
+#pragma GCC optimize("-O3,inline,omit-frame-pointer,unroll-loops")
 #include <iostream>
 #include <chrono>
 #include <string>
@@ -6,6 +7,9 @@
 #include <vector>
 #include <unordered_set>
 #include <set>
+#include <fstream>
+
+using namespace std::chrono;
 
 constexpr double MAP_RADIUS = 6000.0;
 int TANKERS_BY_PLAYER;
@@ -105,6 +109,10 @@ enum Skill {
 enum Action {
     SKILL, MOVE, WAIT
 };
+
+high_resolution_clock::time_point start;
+#define NOW high_resolution_clock::now()
+#define TIME duration_cast<duration<double>>(NOW - start).count()
 
 // ***********************************************************
 
@@ -261,7 +269,6 @@ public:
         this->b = b;
     }
 
-    Tanker* dead();
 };
 
 // ****************************************************************************************
@@ -270,6 +277,7 @@ public:
 Point WATERTOWN(0, 0);
 
 Collision NULL_COLLISION(1.0 + EPSILON);
+double NULL_COLLISION_TIME = 1.0 + EPSILON;
 
 // ****************************************************************************************
 class Player {
@@ -403,40 +411,40 @@ public:
         }
     }
 
-    virtual Collision getCollision() { //why not just return time and already know other stuff
+    virtual double getCollision() { //why not just return time and already know other stuff
         if (dist(this, &WATERTOWN) + radius >= MAP_RADIUS)
-            return Collision(0, this);
+            return 0;
 
         if (vx == 0.0 && vy == 0.0)
-            return NULL_COLLISION;
+            return NULL_COLLISION_TIME;
 
         double a = vx * vx + vy * vy;
 
         if (a <= 0.0)
-            return NULL_COLLISION;
+            return NULL_COLLISION_TIME;
 
         double b = 2.0 * (x * vx + y * vy);
         double c = x * x + y * y - (MAP_RADIUS - radius) * (MAP_RADIUS - radius);
         double delta = b * b - 4.0 * a * c;
 
         if (delta <= 0.0)
-            return NULL_COLLISION;
+            return NULL_COLLISION_TIME;
 
         double t = (-b + sqrt(delta)) / (2.0 + a);
 
         if (t <= 0.0)
-            return NULL_COLLISION;
+            return NULL_COLLISION_TIME;
 
-        return Collision(t, this);
+        return t;
     }
 
-    Collision getCollision(Unit* u) {
+    double getCollision(Unit* u) {
 
         if (dist(this, u) <= radius + u->radius)
-            return Collision(0.0, this, u);
+            return 0;
 
         if (vx == 0.0 && vy == 0.0 && u->vx == 0.0 && u->vy == 0.0)
-            return NULL_COLLISION;
+            return NULL_COLLISION_TIME;
 
         double x2 = x - u->x;
         double y2 = y - u->y;
@@ -447,23 +455,23 @@ public:
         double a = vx2 * vx2 + vy2 * vy2;
 
         if (a <= 0.0)
-            return NULL_COLLISION;
+            return NULL_COLLISION_TIME;
 
         double b = 2.0 * (x2 * vx2 + y2 * vy2);
         double c = x2 * x2 + y2 * y2 - r2 * r2;
         double delta = b * b - 4.0 * a * c;
 
         if (delta < 0.0)
-            return NULL_COLLISION;
+            return NULL_COLLISION_TIME;
 
         double t = (-b - sqrt(delta)) / (2.0 * a);
 
         bool test = t < EPSILON;
 
         if (t <= 0.0)
-            return NULL_COLLISION;
+            return NULL_COLLISION_TIME;
 
-        return Collision(t, this, u);
+        return t;
     }
 
     void bounce(Unit* u) {
@@ -593,8 +601,8 @@ public:
             thrust(&WATERTOWN, TANKER_THRUST);
     }
 
-    Collision getCollision() {
-        return NULL_COLLISION;
+    double getCollision() {
+        return NULL_COLLISION_TIME;
     }
 
 };
@@ -769,27 +777,17 @@ SkillEffect* Looter::skill(Point* p) {
 
 SkillEffect* Reaper::skillImpl(Point* p) {
     return new ReaperSkillEffect(TYPE_REAPER_SKILL_EFFECT, p->x, p->y, REAPER_SKILL_RADIUS,
-                             REAPER_SKILL_DURATION, REAPER_SKILL_ORDER, this);
+                                 REAPER_SKILL_DURATION, REAPER_SKILL_ORDER, this);
 }
 
 SkillEffect* Destroyer::skillImpl(Point* p) {
     return new DestroyerSkillEffect(TYPE_DESTROYER_SKILL_EFFECT, p->x , p->y,
-                                DESTROYER_SKILL_RADIUS, DESTROYER_SKILL_DURATION, DESTROYER_SKILL_ORDER, this);
+                                    DESTROYER_SKILL_RADIUS, DESTROYER_SKILL_DURATION, DESTROYER_SKILL_ORDER, this);
 }
 
 SkillEffect* Doof::skillImpl(Point* p) {
     return new DoofSkillEffect(TYPE_DOOF_SKILL_EFFECT, p->x , p->y, DOOF_SKILL_RADIUS, DOOF_SKILL_DURATION,
-                           DOOF_SKILL_ORDER, this);
-}
-
-Tanker* Collision::dead() {
-    if (a->type == LOOTER_DESTROYER && b->type == TYPE_TANKER && b->mass < REAPER_SKILL_MASS_BONUS) {
-        return dynamic_cast<Tanker*>(b);
-    }
-    if (b->type == LOOTER_DESTROYER && a->type == TYPE_TANKER && a->mass < REAPER_SKILL_MASS_BONUS) {
-        return dynamic_cast<Tanker*>(a);
-    }
-    return nullptr;
+                               DOOF_SKILL_ORDER, this);
 }
 
 void Player::save() {
@@ -857,48 +855,67 @@ std::vector<Looter*> looters;
 std::set<SkillEffect*, SkillEffectComparator> skillEffects;
 std::vector<Tanker*> tankers;
 std::vector<Wreck*> wrecks;
+int turn = 0;
+Unit* aObject = nullptr;
+Unit* bObject = nullptr;
 // ****************************************************************************************
 //GLOBAL METHODS
 
-Collision getNextCollision() {
-    Collision result = NULL_COLLISION;
+Tanker* dead() {
+    if (aObject->type == LOOTER_DESTROYER && bObject->type == TYPE_TANKER && bObject->mass < REAPER_SKILL_MASS_BONUS) {
+        return dynamic_cast<Tanker*>(bObject);
+    }
+    if (bObject->type == LOOTER_DESTROYER && aObject->type == TYPE_TANKER && aObject->mass < REAPER_SKILL_MASS_BONUS) {
+        return dynamic_cast<Tanker*>(aObject);
+    }
+    return nullptr;
+}
+
+double getNextCollision() {
+    double result = NULL_COLLISION_TIME;
 
     for (int i = 0; i < units.size(); ++i) {
         Unit* unit = units[i];
-        Collision collision = unit->getCollision();
+        double collision = unit->getCollision();
 
-        if (collision.t < result.t)
+        if (collision < result) {
             result = collision;
+            aObject = unit;
+            bObject = nullptr;
+        }
 
         for (int j = i + 1; j < units.size(); ++j) {
             collision = unit->getCollision(units[j]);
 
-            if (collision.t < result.t)
+            if (collision < result) {
                 result = collision;
+                aObject = unit;
+                bObject = units[j];
+            }
         }
     }
     return result;
 }
 
-void playCollision(Collision& collision) {
-    if (collision.b == nullptr) {
-        collision.a->bounce();
+void playCollision() {
+    if (bObject == nullptr) {
+        aObject->bounce();
     }
     else {
-        Tanker* dead = collision.dead();
+        Tanker* deadTanker = dead();
 
-        if (dead != nullptr) {
-            tankers.erase(std::remove(tankers.begin(), tankers.end(), dead), tankers.end());
-            units.erase(std::remove(units.begin(), units.end(), (Unit*)dead), units.end());
+        if (deadTanker != nullptr) {
+            tankers.erase(std::remove(tankers.begin(), tankers.end(), deadTanker), tankers.end());
+            units.erase(std::remove(units.begin(), units.end(), (Unit*)deadTanker), units.end());
 
-            Wreck* wreck = dead->die();
+            Wreck* wreck = deadTanker->die();
 
             if (wreck != nullptr)
                 wrecks.push_back(wreck);
 
         }
         else {
-            collision.a->bounce(collision.b);
+            aObject->bounce(bObject);
         }
     }
 }
@@ -920,15 +937,15 @@ void updateGame() {
 
     double t = 0.0;
 
-    Collision collision = getNextCollision();
+    double collision = getNextCollision();
 
-    while (collision.t + t <= 1.0) {
-        double delta = collision.t;
+    while (collision + t <= 1.0) {
+        double delta = collision;
         for (Unit* unit : units) {
             unit->move(delta);
         }
-        t += collision.t;
-        playCollision(collision);
+        t += collision;
+        playCollision();
         collision = getNextCollision();
     }
 
@@ -1048,16 +1065,73 @@ void reset() {
     for (Player* player : players)
         player->reset();
 
+    skillsToDelete.clear();
+    wrecksToDelete.clear();
+
     GLOBAL_ID = temp_ID;
 }
 
 
 void heuristic(Player* player) { //Sets player moves based on heuristic
+    double dist1 = 50000;
+    double dist2 = 0;
 
+    Wreck* closest = nullptr;
+    for (Wreck* wreck : wrecks) {
+        dist2 = dist(player->looters[0], wreck);
+        if (dist2 < dist1) {
+            closest = wreck;
+            dist1 = dist2;
+        }
+    }
+
+    if (closest == nullptr)
+        player->looters[0]->setWantedThrust(player->looters[1]->x, player->looters[1]->y, 300);
+    else
+        player->looters[0]->setWantedThrust(closest->x, closest->y, dist1 < 800 ? 0 : 300);
+
+    dist1 = 50000;
+
+    Tanker* closestTanker = nullptr;
+    for (Tanker* tanker: tankers) {
+        dist2 = dist(player->looters[1], tanker);
+        if (dist2 < dist1) {
+            closestTanker = tanker;
+            dist1 = dist2;
+        }
+    }
+
+    if (closestTanker == nullptr)
+        player->looters[1]->setWantedThrust(0, 0, 300);
+    else
+        player->looters[1]->setWantedThrust(closestTanker->x, closestTanker->y, 300);
+
+    player->looters[2]->attempt = Action::WAIT;
 }
 
 int scoreState() {
-    return 0;
+    int score = players[0]->score - players[1]->score - players[2]->score;
+    score *= 1000;
+    double dist1 = dist(players[0]->looters[2], players[1]->looters[0]);
+    double dist2 = dist(players[0]->looters[2], players[2]->looters[0]);
+    score -= (int)(dist1 < dist2 ? dist1 : dist2);
+    dist1 = 50000;
+    for (Wreck* wreck : wrecks) {
+        dist2 = dist(players[0]->looters[0], wreck);
+        dist1 = (dist1 < dist2 ? dist1 : dist2);
+    }
+    if (dist1 == 50000)
+        dist1 = dist(players[0]->looters[0], players[0]->looters[1]);
+    score -= (int)dist1;
+    dist1 = 50000;
+    for (Tanker* tanker : tankers) {
+        dist2 = dist(players[0]->looters[1], tanker);
+        dist1 = (dist1 < dist2 ? dist1 : dist2);
+    }
+    if (dist1 == 50000)
+        dist1 = dist(players[0]->looters[1], 0, 0);
+    score -= (int)dist1;
+    return score;
 }
 
 void print() {
@@ -1077,34 +1151,44 @@ public:
     int moveType;
     int x;
     int y;
+    int thrust;
 
     Move() {
 
     }
 
     void randomize() {
-        x = fastRandInt(-6000, 6000);
-        y = fastRandInt(-6000, 6000);
+        x = fastRandInt(-120, 120);
+        y = fastRandInt(-120, 120);
+        thrust = fastRandInt(0, 500);
     }
 
     void mutate(double amplitude) {
         //X
-        double minAmp = x - 1000 * amplitude;
-        double maxAmp = x + 1000 * amplitude;
-        if (minAmp < -6000)
-            minAmp = -6000;
-        if (maxAmp > 6000)
-            maxAmp = 6000;
+        double minAmp = x - 20 * amplitude;
+        double maxAmp = x + 20 * amplitude;
+        if (minAmp < -120)
+            minAmp = -120;
+        if (maxAmp > 120)
+            maxAmp = 120;
         x = fastRandInt(minAmp, maxAmp);
-        
+
         //Y
-        minAmp = y - 1000 * amplitude;
-        maxAmp = y + 1000 * amplitude;
-        if (minAmp < -6000)
-            minAmp = -6000;
-        if (maxAmp > 6000)
-            maxAmp = 6000;
+        minAmp = y - 20 * amplitude;
+        maxAmp = y + 20 * amplitude;
+        if (minAmp < -120)
+            minAmp = -120;
+        if (maxAmp > 120)
+            maxAmp = 120;
         y = fastRandInt(minAmp, maxAmp);
+
+        minAmp = thrust - 25 * amplitude;
+        maxAmp = thrust + 25 * amplitude;
+        if (minAmp < 0)
+            minAmp = 0;
+        if (maxAmp > 500)
+            maxAmp = 500;
+        thrust = fastRandInt(minAmp, maxAmp);
     }
 
 };
@@ -1141,22 +1225,31 @@ public:
         return solution;
     }
 
+    void mutateInPlace(double amplitude) {
+        for (Move& move : movesReaper)
+            move.mutate(amplitude);
+        for (Move& move : movesDestroyer)
+            move.mutate(amplitude);
+        for (Move& move : movesDoof)
+            move.mutate(amplitude);
+    }
+
     Solution* merge(Solution* other) {
         Solution* child = new Solution();
-
         for (int i = 0 ; i < 4; i++) {
-            if (fastRandInt(2)) {
+            if (fastRandInt(2))
                 child->movesReaper[i] = movesReaper[i];
-                child->movesDestroyer[i] = movesDestroyer[i];
-                child->movesDoof[i] = movesDoof[i];
-            }
-            else {
+            else
                 child->movesReaper[i] = other->movesReaper[i];
-                child->movesDestroyer[i] = other->movesDestroyer[i];
+            if (fastRandInt(2))
+                child->movesDoof[i] = movesDoof[i];
+            else
                 child->movesDoof[i] = other->movesDoof[i];
-            }
+            if (fastRandInt(2))
+                child->movesDestroyer[i] = other->movesDestroyer[i];
+            else
+                child->movesDestroyer[i] = movesDestroyer[i];
         }
-
         return child;
     }
 
@@ -1169,22 +1262,26 @@ public:
             }
         }
     }
-    
+
     Solution* copy() {
         Solution* copy = new Solution();
         for (int i = 0 ; i < 4; i++) {
             copy->movesReaper[i].x = movesReaper[i].x;
             copy->movesReaper[i].y = movesReaper[i].y;
+            copy->movesReaper[i].thrust = movesReaper[i].thrust;
             //copy->movesReaper[i].moveType = movesReaper[i].moveType;
 
             copy->movesDestroyer[i].x = movesDestroyer[i].x;
             copy->movesDestroyer[i].y = movesDestroyer[i].y;
+            copy->movesDestroyer[i].thrust = movesDestroyer[i].thrust;
             //copy->movesDestroyer[i].moveType = movesDestroyer[i].moveType;
 
             copy->movesDoof[i].x = movesDoof[i].x;
             copy->movesDoof[i].y = movesDoof[i].y;
+            copy->movesDoof[i].thrust = movesDoof[i].thrust;
             //copy->movesDoof[i].moveType = movesDoof[i].moveType;
         }
+        copy->score = score;
         return copy;
     }
 
@@ -1192,24 +1289,31 @@ public:
         for (int i = 0 ; i < 4; i++) {
             movesReaper[i].x = other->movesReaper[i].x;
             movesReaper[i].y = other->movesReaper[i].y;
+            movesReaper[i].thrust = other->movesReaper[i].thrust;
             //movesReaper[i].moveType = other->movesReaper[i].moveType;
 
             movesDestroyer[i].x = other->movesDestroyer[i].x;
             movesDestroyer[i].y = other->movesDestroyer[i].y;
+            movesDestroyer[i].thrust = other->movesDestroyer[i].thrust;
             //movesDestroyer[i].moveType = other->movesDestroyer[i].moveType;
 
             movesDoof[i].x = other->movesDoof[i].x;
             movesDoof[i].y = other->movesDoof[i].y;
+            movesDoof[i].thrust = other->movesDoof[i].thrust;
             //movesDoof[i].moveType = other->movesDoof[i].moveType;
         }
+        score = other->score;
     }
 
 
     void simulate() {
         for (int i = 0; i < 4; i++) {
-            players[0]->looters[0]->setWantedThrust(movesReaper[i].x, movesReaper[i].y, 300);
-            players[0]->looters[1]->setWantedThrust(movesDestroyer[i].x, movesDestroyer[i].y, 300);
-            players[0]->looters[2]->setWantedThrust(movesDoof[i].x, movesDoof[i].y, 300);
+            players[0]->looters[0]->setWantedThrust(movesReaper[i].x * 50,
+                                                    movesReaper[i].y * 50, movesReaper[i].thrust);
+            players[0]->looters[1]->setWantedThrust(movesDestroyer[i].x * 50,
+                                                    movesDestroyer[i].y * 50, movesDestroyer[i].thrust);
+            players[0]->looters[2]->setWantedThrust(movesDoof[i].x * 50,
+                                                    movesDoof[i].y * 50, movesDoof[i].thrust);
             heuristic(players[1]);
             heuristic(players[2]);
             updateGame();
@@ -1222,6 +1326,9 @@ public:
 // ****************************************************************************************
 int main()
 {
+    //std::ifstream in("~/CLionProjects/MeanMax/input.txt");
+    //std::cin.rdbuf(in.rdbuf());
+    fast_srand(42);
     for (int i = 0 ; i < 3; i++) {
         players[i] = new Player(i);
     }
@@ -1277,7 +1384,7 @@ int main()
         int unitCount;
         std::cin >> unitCount; std::cin.ignore();
 
-        /*
+        ///*
         std::cerr << myScore << std::endl;
         std::cerr << enemyScore1 << std::endl;
         std::cerr << enemyScore2 << std::endl;
@@ -1285,7 +1392,7 @@ int main()
         std::cerr << enemyRage1 << std::endl;
         std::cerr << enemyRage2 << std::endl;
         std::cerr << unitCount << std::endl;
-         */
+        //*/
 
         players[0]->score = myScore;
         players[0]->rage = myRage;
@@ -1307,10 +1414,10 @@ int main()
             int extra;
             int extra2;
             std::cin >> unitId >> unitType >> player >> mass >> radius >> x >> y >> vx >> vy >> extra >> extra2; std::cin.ignore();
-            /*
+            ///*
             std::cerr << unitId << " " << unitType << " " << player << " " << mass << " " << radius << " " << x << " " <<
                       y << " " << vx << " " << vy << " " << extra << " " << extra2 << std::endl;
-            */
+            //*/
             tempID = unitId < tempID ? tempID : unitId;
             if (unitType < 3) {
                 players[player]->looters[unitType]->mass = mass;
@@ -1359,9 +1466,25 @@ int main()
         }
         GLOBAL_ID = tempID + 1;
 
+        save(); //SAVING STATE
+
+        start = NOW;
+
         //TODO: use previous GA solution and modify the last turn randomly
-        // once used delete best
-        delete best;
+
+        Solution* base;
+
+        if (turn) {
+            base = new Solution();
+
+            for (int j = 1; j < 4; ++j) {
+                base->movesReaper[j - 1] = best->movesReaper[j];
+                base->movesDestroyer[j - 1] = best->movesDestroyer[j];
+                base->movesDoof[j - 1] = best->movesDoof[j];
+            }
+
+            delete best;
+        }
 
         Solution** pool = new Solution*[POOL];
         Solution** newPool = new Solution*[POOL];
@@ -1379,9 +1502,33 @@ int main()
 
         Solution* tempBest = sol;
 
+        int startI = 1;
+
         //TODO: Fill 1/5 pool with mutations of last turn if not turn 0
 
-        for (int i = 0; i < POOL; ++i) { //Fill rest with totally random
+        if (turn) {
+            for (int i = startI; i < POOL / 5; ++i) {
+                Solution* solution = new Solution();
+                solution->copy(base);
+
+                solution->movesReaper[3].randomize();
+                solution->movesDestroyer[3].randomize();
+                solution->movesDoof[3].randomize();
+
+                solution->simulate();
+
+                if (solution->score > tempBest->score)
+                    tempBest = solution;
+
+                pool[i] = solution;
+            }
+
+            delete base;
+
+            startI = POOL / 5;
+        }
+
+        for (int i = startI; i < POOL; ++i) { //Fill rest with totally random
             Solution* solution = new Solution();
             solution->randomize();
 
@@ -1398,14 +1545,18 @@ int main()
 
         tempBest = best;
 
+        double limit = turn ? .043 : .9;
+
+#define LIMIT TIME < limit
+
         bool continueLoop = true;
 
         int poolFE;
-        while (continueLoop) {
+        while (LIMIT) {
 
             Solution* solution = new Solution();
             solution->copy(tempBest);
-            solution->mutate(.5);
+            solution->mutateInPlace(.05);
             solution->simulate();
 
             if (solution->score > tempBest->score)
@@ -1417,7 +1568,7 @@ int main()
 
             poolFE = 1;
 
-            while (poolFE < POOL && continueLoop) {
+            while (poolFE < POOL && LIMIT) {
                 int aIndex = fastRandInt(POOL);
                 int bIndex;
 
@@ -1439,8 +1590,8 @@ int main()
 
                 Solution* child = pool[firstIndex]->merge(pool[secondIndex]);
 
-                if (!fastRandInt(MUTATION))
-                    child->mutate(.2);
+                //if (!fastRandInt(MUTATION))
+                //child->mutateInPlace(.2);
 
                 child->simulate();
 
@@ -1466,6 +1617,26 @@ int main()
             tempBest = best;
 
         }
+
+        reset();
+
+        std::cout << best->movesReaper[0].x * 50 << " " << best->movesReaper[0].y * 50 << " " <<
+                  best->movesReaper[0].thrust << std::endl;
+        std::cout << best->movesDestroyer[0].x * 50 << " " << best->movesDestroyer[0].y * 50 <<
+                  " " << best->movesDestroyer[0].thrust << std::endl;
+        std::cout << best->movesDoof[0].x * 50 << " " << best->movesDoof[0].y * 50 << " "
+                  << best->movesDoof[0].thrust << std::endl;
+
+        std::cerr << "Counter: " << counter << std::endl;
+
+        for (int i = 0; i < poolFE; ++i)
+            delete pool[i];
+
+        delete [] pool;
+        delete [] newPool;
+
+
+        turn += 1;
 
 
         // Write an action using cout. DON'T FORGET THE "<< endl"
