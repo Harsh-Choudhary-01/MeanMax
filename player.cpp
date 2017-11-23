@@ -858,6 +858,7 @@ std::vector<Wreck*> wrecks;
 int turn = 0;
 Unit* aObject = nullptr;
 Unit* bObject = nullptr;
+int thrustValues[4] = {0, 150, 300, 300};
 // ****************************************************************************************
 //GLOBAL METHODS
 
@@ -1160,7 +1161,7 @@ public:
     void randomize() {
         x = fastRandInt(-120, 120);
         y = fastRandInt(-120, 120);
-        thrust = fastRandInt(0, 500);
+        thrust = fastRandInt(0, 4);
     }
 
     void mutate(double amplitude) {
@@ -1182,13 +1183,7 @@ public:
             maxAmp = 120;
         y = fastRandInt(minAmp, maxAmp);
 
-        minAmp = thrust - 25 * amplitude;
-        maxAmp = thrust + 25 * amplitude;
-        if (minAmp < 0)
-            minAmp = 0;
-        if (maxAmp > 500)
-            maxAmp = 500;
-        thrust = fastRandInt(minAmp, maxAmp);
+        thrust = fastRandInt(0, 4);
     }
 
 };
@@ -1309,11 +1304,11 @@ public:
     void simulate() {
         for (int i = 0; i < 4; i++) {
             players[0]->looters[0]->setWantedThrust(movesReaper[i].x * 50,
-                                                    movesReaper[i].y * 50, movesReaper[i].thrust);
+                                                    movesReaper[i].y * 50, thrustValues[movesReaper[i].thrust]);
             players[0]->looters[1]->setWantedThrust(movesDestroyer[i].x * 50,
-                                                    movesDestroyer[i].y * 50, movesDestroyer[i].thrust);
+                                                    movesDestroyer[i].y * 50, thrustValues[movesDestroyer[i].thrust]);
             players[0]->looters[2]->setWantedThrust(movesDoof[i].x * 50,
-                                                    movesDoof[i].y * 50, movesDoof[i].thrust);
+                                                    movesDoof[i].y * 50, thrustValues[movesDoof[i].thrust]);
             heuristic(players[1]);
             heuristic(players[2]);
             updateGame();
@@ -1383,6 +1378,8 @@ int main()
         std::cin >> enemyRage2; std::cin.ignore();
         int unitCount;
         std::cin >> unitCount; std::cin.ignore();
+
+        std::cerr << "GSEED: " << g_seed << std::endl;
 
         ///*
         std::cerr << myScore << std::endl;
@@ -1621,11 +1618,11 @@ int main()
         reset();
 
         std::cout << best->movesReaper[0].x * 50 << " " << best->movesReaper[0].y * 50 << " " <<
-                  best->movesReaper[0].thrust << std::endl;
+                  thrustValues[best->movesReaper[0].thrust] << std::endl;
         std::cout << best->movesDestroyer[0].x * 50 << " " << best->movesDestroyer[0].y * 50 <<
-                  " " << best->movesDestroyer[0].thrust << std::endl;
+                  " " << thrustValues[best->movesDestroyer[0].thrust] << std::endl;
         std::cout << best->movesDoof[0].x * 50 << " " << best->movesDoof[0].y * 50 << " "
-                  << best->movesDoof[0].thrust << std::endl;
+                  << thrustValues[best->movesDoof[0].thrust] << std::endl;
 
         std::cerr << "Counter: " << counter << std::endl;
 
