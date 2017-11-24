@@ -430,7 +430,7 @@ public:
         if (delta <= 0.0)
             return NULL_COLLISION_TIME;
 
-        double t = (-b + sqrt(delta)) / (2.0 + a);
+        double t = (-b + sqrt(delta)) / (2.0 * a);
 
         if (t <= 0.0)
             return NULL_COLLISION_TIME;
@@ -1055,6 +1055,7 @@ void reset() {
 
     for (Tanker* tanker : savedTankers) {
         tankers.push_back(tanker);
+        units.push_back(tanker);
         tanker->reset();
     }
 
@@ -1089,13 +1090,13 @@ void heuristic(Player* player) { //Sets player moves based on heuristic
     if (closest == nullptr)
         player->looters[0]->setWantedThrust(player->looters[1]->x, player->looters[1]->y, 300);
     else
-        player->looters[0]->setWantedThrust(closest->x, closest->y, dist1 < 800 ? 0 : 300);
+        player->looters[0]->setWantedThrust(closest->x, closest->y, 300);
 
     dist1 = 50000;
 
     Tanker* closestTanker = nullptr;
     for (Tanker* tanker: tankers) {
-        dist2 = dist(player->looters[1], tanker);
+        dist2 = dist(player->looters[1], tanker) - tanker->water * 750;
         if (dist2 < dist1) {
             closestTanker = tanker;
             dist1 = dist2;
@@ -1107,7 +1108,23 @@ void heuristic(Player* player) { //Sets player moves based on heuristic
     else
         player->looters[1]->setWantedThrust(closestTanker->x, closestTanker->y, 300);
 
-    player->looters[2]->attempt = Action::WAIT;
+    if (player->rage > 60) {
+        Looter* target = nullptr;
+        for (int i = 0 ; i < 3; ++i) {
+            double distance = dist(player->looters[1], players[i]->looters[0]);
+            if (distance < 2000 && distance > EPSILON && (target == nullptr || target->player->score < players[i]->score)) {
+                target = players[i]->looters[0];
+            }
+        }
+        if (target != nullptr) {
+            player->looters[1]->attempt = Action::SKILL;
+            player->looters[1]->wantedThrustTarget.x = target->x;
+            player->looters[1]->wantedThrustTarget.y = target->y;
+            skillEffects.insert(player->looters[1]->skill(target));
+        }
+    }
+
+    player->looters[2]->setWantedThrust(0, 0 , 300);
 }
 
 int scoreState() {
@@ -1135,16 +1152,35 @@ int scoreState() {
     return score;
 }
 
-void print() {
-    for (int i = 0 ; i < 3 ; i++)
-        std::cout << players[i]->score << std::endl;
-    for (int i = 0 ; i < 3; i++)
-        std::cout << players[i]->rage << std::endl;
-    for (Unit* unit : units)
-        std::cout << unit->id << " " << unit->type << " " << unit->mass
-                  << " " << unit->radius << " " << unit->x << " " << unit->y
-                  << " " << unit->vx << " " << unit->vy << std::endl;
-
+std::string print() {
+    std::string output;
+    //std::cerr << "EXPECTED\n";
+    output += "EXPECTED\n";
+    std::string space = " ";
+    for (int i = 0 ; i < 3 ; i++) {
+        //std::cerr << players[i]->score << std::endl;
+        output += std::to_string(players[i]->score) + "\n";
+    }
+    for (int i = 0 ; i < 3; i++) {
+        //std::cerr << players[i]->rage << std::endl;
+        output += std::to_string(players[i]->rage) + "\n";
+    }
+    for (Unit* unit : units) {
+        // std::cerr << unit->id << " " << unit->type << " " << unit->mass
+        // << " " << unit->radius << " " << unit->x << " " << unit->y
+        //<< " " << unit->vx << " " << unit->vy << std::endl;
+        if (dist(unit, &WATERTOWN) + unit->radius <= MAP_RADIUS)
+        output += std::to_string(unit->id) + space + std::to_string(unit->type) + space +
+                  std::to_string(unit->mass) + space + std::to_string(unit->radius) + space + std::to_string(unit->x)
+                  + space + std::to_string(unit->y) + space + std::to_string(unit->vx) + space +
+                  std::to_string(unit->vy) + "\n";
+    }
+    for (Wreck* wreck : wrecks) {
+        output += std::to_string(wreck->id) + space + std::to_string(wreck->x) + space + std::to_string(wreck->y) +
+                space + std::to_string(wreck->radius) + space + std::to_string(wreck->water) + "\n";
+    }
+    //std::cerr << output;
+    return output;
 }
 
 class Move {
@@ -1321,6 +1357,7 @@ public:
 // ****************************************************************************************
 int main()
 {
+    //TODO: MAKE SURE ORDER DOESN'T MATTER
     //std::ifstream in("~/CLionProjects/MeanMax/input.txt");
     //std::cin.rdbuf(in.rdbuf());
     fast_srand(42);
@@ -1348,6 +1385,7 @@ int main()
     }
 
     Solution* best = new Solution();
+    std::string previous;
     // game loop
     while (true) {
         // ****************************************************************************************
@@ -1461,6 +1499,13 @@ int main()
                 skillEffects.insert(skillEffect);
             }
         }
+
+        std::string thisTurn = print();
+
+        if (turn > 0 && thisTurn.compare(previous) != 0) {
+            std::cerr << "SHOULD BE\n" << thisTurn << std::endl;
+            std::cerr << "BUT I PREDICTED:\n" << previous << std::endl;
+        }
         GLOBAL_ID = tempID + 1;
 
         save(); //SAVING STATE
@@ -1468,6 +1513,8 @@ int main()
         start = NOW;
 
         //TODO: use previous GA solution and modify the last turn randomly
+
+        /*
 
         Solution* base;
 
@@ -1632,9 +1679,38 @@ int main()
         delete [] pool;
         delete [] newPool;
 
+         */
+
+        reset();
+
+        reset();
+
+        for (Player* player : players)
+            heuristic(player);
+
+        updateGame();
+
+        previous = print();
+
+        //std::cerr << previous;
+
+        reset();
+
+        //if (turn > 0 && print().compare(thisTurn) != 0)
+            //throw;
 
         turn += 1;
 
+        std::cout << players[0]->looters[0]->wantedThrustTarget.x << " " << players[0]->looters[0]->wantedThrustTarget.y
+                  << " " << 300 << std::endl;
+
+        if (players[0]->looters[1]->attempt == Action::SKILL)
+            std::cout << "SKILL " << players[0]->looters[1]->wantedThrustTarget.x << " "
+                      << players[0]->looters[1]->wantedThrustTarget.y << std::endl;
+        else
+            std::cout << players[0]->looters[1]->wantedThrustTarget.x << " " << players[0]->looters[1]->wantedThrustTarget.y
+                  << " " << 300 << std::endl;
+        std::cout << "0 0 300" << std::endl;
 
         // Write an action using cout. DON'T FORGET THE "<< endl"
         // To debug: cerr << "Debug messages..." << endl;
