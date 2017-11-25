@@ -626,6 +626,12 @@ public:
     }
 
     SkillEffect* skill(Point* p);
+    
+    SkillEffect* skill(int x, int y);
+    
+    virtual SkillEffect* skillImpl(int x, int y) {
+        return nullptr;
+    }
 
     virtual SkillEffect* skillImpl(Point* p) {
         return nullptr;
@@ -652,6 +658,8 @@ public:
     }
 
     SkillEffect* skillImpl(Point* p);
+
+    SkillEffect* skillImpl(int x, int y);
 };
 // ****************************************************************************************
 class Destroyer : public Looter {
@@ -665,6 +673,8 @@ public:
     }
 
     SkillEffect* skillImpl(Point* p);
+
+    SkillEffect* skillImpl(int x, int y);
 };
 // ****************************************************************************************
 class Doof : public Looter {
@@ -678,6 +688,8 @@ public:
     }
 
     SkillEffect* skillImpl(Point* p);
+    
+    SkillEffect* skillImpl(int x, int y);
 
     int sing() {
         return (int)floor(speed() * DOOF_RAGE_COEF);
@@ -775,6 +787,16 @@ SkillEffect* Looter::skill(Point* p) {
     return nullptr;
 }
 
+SkillEffect* Looter::skill(int x, int y) {
+    if (player->rage >= skillCost && dist(this, x, y) <= skillRange) {
+        player->rage -= skillCost;
+        SkillEffect* effect = skillImpl(x, y);
+        skillsToDelete.push_back(effect);
+        return effect;
+    }
+    return nullptr;
+}
+
 SkillEffect* Reaper::skillImpl(Point* p) {
     return new ReaperSkillEffect(TYPE_REAPER_SKILL_EFFECT, p->x, p->y, REAPER_SKILL_RADIUS,
                                  REAPER_SKILL_DURATION, REAPER_SKILL_ORDER, this);
@@ -787,6 +809,21 @@ SkillEffect* Destroyer::skillImpl(Point* p) {
 
 SkillEffect* Doof::skillImpl(Point* p) {
     return new DoofSkillEffect(TYPE_DOOF_SKILL_EFFECT, p->x , p->y, DOOF_SKILL_RADIUS, DOOF_SKILL_DURATION,
+                               DOOF_SKILL_ORDER, this);
+}
+
+SkillEffect* Reaper::skillImpl(int x, int y) {
+    return new ReaperSkillEffect(TYPE_REAPER_SKILL_EFFECT, x, y, REAPER_SKILL_RADIUS,
+                                 REAPER_SKILL_DURATION, REAPER_SKILL_ORDER, this);
+}
+
+SkillEffect* Destroyer::skillImpl(int x, int y) {
+    return new DestroyerSkillEffect(TYPE_DESTROYER_SKILL_EFFECT, x , y,
+                                    DESTROYER_SKILL_RADIUS, DESTROYER_SKILL_DURATION, DESTROYER_SKILL_ORDER, this);
+}
+
+SkillEffect* Doof::skillImpl(int x, int y) {
+    return new DoofSkillEffect(TYPE_DOOF_SKILL_EFFECT, x , y, DOOF_SKILL_RADIUS, DOOF_SKILL_DURATION,
                                DOOF_SKILL_ORDER, this);
 }
 
@@ -1127,11 +1164,11 @@ void heuristic(Player* player) { //Sets player moves based on heuristic
                 double coeff = (dist1 - closestTanker->radius - 700) / dist1;
                 diffTarget = true;
                 player->looters[1]->setWantedThrust(player->looters[1]->x +
-                                                            (closestTanker->x - player->looters[1]->x) * coeff -
-                                                            player->looters[1]->vx,
+                                                    (closestTanker->x - player->looters[1]->x) * coeff -
+                                                    player->looters[1]->vx,
                                                     player->looters[1]->y +
-                                                            (closestTanker->y - player->looters[1]->y) * coeff -
-                                                            player->looters[1]->vy, 300);
+                                                    (closestTanker->y - player->looters[1]->y) * coeff -
+                                                    player->looters[1]->vy, 300);
                 break;
             }
         }
@@ -1162,22 +1199,8 @@ int scoreState() {
         dist2 = dist(players[0]->looters[0], wreck);
         dist1 = (dist1 < dist2 ? dist1 : dist2);
     }
-    Tanker* reaperTarget = nullptr;
-    if (dist1 == 50000) {
-        for (Tanker* tanker : tankers) {
-            for (int i = 0; i < 3; ++i) {
-                dist2 = dist(players[i]->looters[1], tanker);
-                if (dist2 < dist1) {
-                    reaperTarget = tanker;
-                    dist1 = dist2;
-                }
-            }
-        }
-        if (reaperTarget != nullptr)
-            dist1 = dist(players[0]->looters[0], reaperTarget);
-        else
-            dist1 = dist(players[0]->looters[0], players[0]->looters[1]);
-    }
+    if (dist1 == 50000)
+        dist1 = dist(players[0]->looters[0], players[0]->looters[1]);
     score -= (int)dist1;
 //    dist1 = 50000;
 //    for (Tanker* tanker : tankers) {
@@ -1204,9 +1227,10 @@ void print() {
 
 class Move {
 public:
-    int moveType;
+    bool isSkill = false;
     int x;
     int y;
+    int rage = 30;
 
     Move() {
 
@@ -1235,6 +1259,7 @@ public:
         if (maxAmp > 120)
             maxAmp = 120;
         y = fastRandInt(minAmp, maxAmp);
+
     }
 
 };
@@ -1248,7 +1273,10 @@ public:
     int score;
 
     Solution() {
-
+        movesDestroyer[0].rage = 60;
+        movesDestroyer[1].rage = 60;
+        movesDestroyer[2].rage = 60;
+        movesDestroyer[3].rage = 60;
     }
 
     void randomize() {
@@ -1312,17 +1340,9 @@ public:
     Solution* copy() {
         Solution* copy = new Solution();
         for (int i = 0 ; i < 4; i++) {
-            copy->movesReaper[i].x = movesReaper[i].x;
-            copy->movesReaper[i].y = movesReaper[i].y;
-            //copy->movesReaper[i].moveType = movesReaper[i].moveType;
-
-            copy->movesDestroyer[i].x = movesDestroyer[i].x;
-            copy->movesDestroyer[i].y = movesDestroyer[i].y;
-            //copy->movesDestroyer[i].moveType = movesDestroyer[i].moveType;
-
-            copy->movesDoof[i].x = movesDoof[i].x;
-            copy->movesDoof[i].y = movesDoof[i].y;
-            //copy->movesDoof[i].moveType = movesDoof[i].moveType;
+            copy->movesReaper[i] = movesReaper[i];
+            copy->movesDestroyer[i] = movesDestroyer[i];
+            copy->movesDoof[i] = movesDoof[i];
         }
         copy->score = score;
         return copy;
@@ -1330,17 +1350,9 @@ public:
 
     void copy(Solution* other) {
         for (int i = 0 ; i < 4; i++) {
-            movesReaper[i].x = other->movesReaper[i].x;
-            movesReaper[i].y = other->movesReaper[i].y;
-            //movesReaper[i].moveType = other->movesReaper[i].moveType;
-
-            movesDestroyer[i].x = other->movesDestroyer[i].x;
-            movesDestroyer[i].y = other->movesDestroyer[i].y;
-            //movesDestroyer[i].moveType = other->movesDestroyer[i].moveType;
-
-            movesDoof[i].x = other->movesDoof[i].x;
-            movesDoof[i].y = other->movesDoof[i].y;
-            //movesDoof[i].moveType = other->movesDoof[i].moveType;
+            movesReaper[i] = other->movesReaper[i];
+            movesDestroyer[i] = other->movesDestroyer[i];
+            movesDoof[i] = other->movesDoof[i];
         }
         score = other->score;
     }
@@ -1348,9 +1360,27 @@ public:
 
     void simulate() {
         for (int i = 0; i < 4; i++) {
-            players[0]->looters[0]->setWantedThrust(movesReaper[i].x * 50, movesReaper[i].y * 50, 300);
-            players[0]->looters[1]->setWantedThrust(movesDestroyer[i].x * 50, movesDestroyer[i].y * 50, 300);
-            players[0]->looters[2]->setWantedThrust(movesDoof[i].x * 50, movesDoof[i].y * 50, 300);
+            if (movesReaper[i].isSkill) {
+                SkillEffect* effect = players[0]->looters[0]->skill(movesReaper[i].x * 50, movesReaper[i].y * 50);
+                if (effect != nullptr)
+                    skillEffects.insert(effect);
+            }
+            else
+                players[0]->looters[0]->setWantedThrust(movesReaper[i].x * 50, movesReaper[i].y * 50, 300);
+            if (movesDestroyer[i].isSkill) {
+                SkillEffect* effect = players[0]->looters[1]->skill(movesDestroyer[i].x * 50, movesDestroyer[i].y * 50);
+                if (effect != nullptr)
+                    skillEffects.insert(effect);
+            }
+            else
+                players[0]->looters[1]->setWantedThrust(movesDestroyer[i].x * 50, movesDestroyer[i].y * 50, 300);
+            if (movesDoof[i].isSkill) {
+                SkillEffect* effect = players[0]->looters[2]->skill(movesDoof[i].x * 50, movesDoof[i].y * 50);
+                if (effect != nullptr)
+                    skillEffects.insert(effect);
+            }
+            else
+                players[0]->looters[2]->setWantedThrust(movesDoof[i].x * 50, movesDoof[i].y * 50, 300);
             heuristic(players[1]);
             heuristic(players[2]);
             updateGame();
@@ -1655,11 +1685,31 @@ int main()
 
         }
 
+        Wreck* target = nullptr;
+        if (players[0]->rage > 30) {
+            for (Wreck *wreck : wrecks) {
+                if (dist(players[0]->looters[0], wreck) < wreck->radius || dist(players[0]->looters[2], wreck) > 2000)
+                    continue;
+                if (dist(players[1]->looters[0], wreck) < wreck->radius &&
+                    !players[1]->looters[0]->isInDoofSkill(skillEffects)) {
+                    target = wreck;
+                    break;
+                } else if (dist(players[2]->looters[0], wreck) < wreck->radius &&
+                           !players[2]->looters[0]->isInDoofSkill(skillEffects)) {
+                    target = wreck;
+                    break;
+                }
+            }
+        }
+
         reset();
 
         std::cout << best->movesReaper[0].x * 50 << " " << best->movesReaper[0].y * 50 << " " << 300 << std::endl;
         std::cout << best->movesDestroyer[0].x * 50 << " " << best->movesDestroyer[0].y * 50 << " " << 300 << std::endl;
-        std::cout << best->movesDoof[0].x * 50 << " " << best->movesDoof[0].y * 50 << " " << 300 << std::endl;
+        if (target != nullptr)
+            std::cout << "SKILL " << target->x << " " << target->y << std::endl;
+        else
+            std::cout << best->movesDoof[0].x * 50 << " " << best->movesDoof[0].y * 50 << " " << 300 << std::endl;
 
         std::cerr << "Counter: " << counter << std::endl;
 
