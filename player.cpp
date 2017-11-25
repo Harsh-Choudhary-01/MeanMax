@@ -858,7 +858,6 @@ std::vector<Wreck*> wrecks;
 int turn = 0;
 Unit* aObject = nullptr;
 Unit* bObject = nullptr;
-int thrustValues[4] = {0, 150, 300, 300};
 // ****************************************************************************************
 //GLOBAL METHODS
 
@@ -1090,97 +1089,117 @@ void heuristic(Player* player) { //Sets player moves based on heuristic
     if (closest == nullptr)
         player->looters[0]->setWantedThrust(player->looters[1]->x, player->looters[1]->y, 300);
     else
-        player->looters[0]->setWantedThrust(closest->x, closest->y, 300);
+        player->looters[0]->setWantedThrust(closest->x - player->looters[0]->vx ,
+                                            closest->y - player->looters[0]->vy , 300);
 
     dist1 = 50000;
 
+    Tanker* reaperTarget = nullptr;
+    double distMinTanker = 50000;
     Tanker* closestTanker = nullptr;
     for (Tanker* tanker: tankers) {
-        dist2 = dist(player->looters[1], tanker) - tanker->water * 750;
+        if (closest == nullptr) {
+            for (int i = 0; i < 3; ++i) {
+                dist2 = dist(players[i]->looters[1], tanker);
+                if (dist2 < distMinTanker) {
+                    reaperTarget = tanker;
+                    distMinTanker = dist2;
+                }
+            }
+        }
+        dist2 = dist(player->looters[1], tanker);
         if (dist2 < dist1) {
             closestTanker = tanker;
             dist1 = dist2;
         }
     }
 
+    if (reaperTarget != nullptr)
+        player->looters[0]->setWantedThrust(reaperTarget->x, reaperTarget->y, 300);
+
     if (closestTanker == nullptr)
         player->looters[1]->setWantedThrust(0, 0, 300);
-    else
-        player->looters[1]->setWantedThrust(closestTanker->x, closestTanker->y, 300);
-
-    if (player->rage > 60) {
-        Looter* target = nullptr;
-        for (int i = 0 ; i < 3; ++i) {
-            double distance = dist(player->looters[1], players[i]->looters[0]);
-            if (distance < 2000 && distance > EPSILON && (target == nullptr || target->player->score < players[i]->score)) {
-                target = players[i]->looters[0];
+    else {
+        dist2 = dist(closestTanker, player->looters[0]);
+        bool diffTarget = false;
+        for (int i = 0 ; i < 3 ; ++i) {
+            if (player->index != i && dist(players[i]->looters[0], closestTanker) < dist2) {
+                double coeff = (dist1 - closestTanker->radius - 700) / dist1;
+                diffTarget = true;
+                player->looters[1]->setWantedThrust(player->looters[1]->x +
+                                                            (closestTanker->x - player->looters[1]->x) * coeff -
+                                                            player->looters[1]->vx,
+                                                    player->looters[1]->y +
+                                                            (closestTanker->y - player->looters[1]->y) * coeff -
+                                                            player->looters[1]->vy, 300);
+                break;
             }
         }
-        if (target != nullptr) {
-            player->looters[1]->attempt = Action::SKILL;
-            player->looters[1]->wantedThrustTarget.x = target->x;
-            player->looters[1]->wantedThrustTarget.y = target->y;
-            skillEffects.insert(player->looters[1]->skill(target));
+        if(!diffTarget)
+            player->looters[1]->setWantedThrust(closestTanker->x, closestTanker->y, 300);
+    }
+
+    Player* targetReaper = nullptr;
+    for (Player* playerObj : players) {
+        if (playerObj != player) {
+            if (targetReaper == nullptr || targetReaper->score < playerObj->score)
+                targetReaper = playerObj;
         }
     }
 
-    player->looters[2]->setWantedThrust(0, 0 , 300);
+    player->looters[2]->setWantedThrust(targetReaper->looters[0]->x, targetReaper->looters[0]->y, 300);
 }
 
 int scoreState() {
     int score = players[0]->score - players[1]->score - players[2]->score;
-    score *= 1000;
+    score *= 3000;
     double dist1 = dist(players[0]->looters[2], players[1]->looters[0]);
     double dist2 = dist(players[0]->looters[2], players[2]->looters[0]);
     score -= (int)(dist1 < dist2 ? dist1 : dist2);
     dist1 = 50000;
     for (Wreck* wreck : wrecks) {
+        score += (int)(wreck->water * (12000 - dist(players[0]->looters[0], wreck)) * .1);
         dist2 = dist(players[0]->looters[0], wreck);
         dist1 = (dist1 < dist2 ? dist1 : dist2);
     }
-    if (dist1 == 50000)
-        dist1 = dist(players[0]->looters[0], players[0]->looters[1]);
-    score -= (int)dist1;
-    dist1 = 50000;
-    for (Tanker* tanker : tankers) {
-        dist2 = dist(players[0]->looters[1], tanker);
-        dist1 = (dist1 < dist2 ? dist1 : dist2);
+    Tanker* reaperTarget = nullptr;
+    if (dist1 == 50000) {
+        for (Tanker* tanker : tankers) {
+            for (int i = 0; i < 3; ++i) {
+                dist2 = dist(players[i]->looters[1], tanker);
+                if (dist2 < dist1) {
+                    reaperTarget = tanker;
+                    dist1 = dist2;
+                }
+            }
+        }
+        if (reaperTarget != nullptr)
+            dist1 = dist(players[0]->looters[0], reaperTarget);
+        else
+            dist1 = dist(players[0]->looters[0], players[0]->looters[1]);
     }
-    if (dist1 == 50000)
-        dist1 = dist(players[0]->looters[1], 0, 0);
     score -= (int)dist1;
+//    dist1 = 50000;
+//    for (Tanker* tanker : tankers) {
+//        dist2 = dist(players[0]->looters[1], tanker);
+//        dist1 = (dist1 < dist2 ? dist1 : dist2);
+//    }
+//    if (dist1 == 50000)
+//        dist1 = dist(players[0]->looters[1], 0, 0);
+//    score -= (int)dist1;
     return score;
 }
 
-std::string print() {
-    std::string output;
-    //std::cerr << "EXPECTED\n";
-    output += "EXPECTED\n";
-    std::string space = " ";
-    for (int i = 0 ; i < 3 ; i++) {
-        //std::cerr << players[i]->score << std::endl;
-        output += std::to_string(players[i]->score) + "\n";
-    }
-    for (int i = 0 ; i < 3; i++) {
-        //std::cerr << players[i]->rage << std::endl;
-        output += std::to_string(players[i]->rage) + "\n";
-    }
-    for (Unit* unit : units) {
-        // std::cerr << unit->id << " " << unit->type << " " << unit->mass
-        // << " " << unit->radius << " " << unit->x << " " << unit->y
-        //<< " " << unit->vx << " " << unit->vy << std::endl;
-        if (dist(unit, &WATERTOWN) + unit->radius <= MAP_RADIUS)
-        output += std::to_string(unit->id) + space + std::to_string(unit->type) + space +
-                  std::to_string(unit->mass) + space + std::to_string(unit->radius) + space + std::to_string(unit->x)
-                  + space + std::to_string(unit->y) + space + std::to_string(unit->vx) + space +
-                  std::to_string(unit->vy) + "\n";
-    }
-    for (Wreck* wreck : wrecks) {
-        output += std::to_string(wreck->id) + space + std::to_string(wreck->x) + space + std::to_string(wreck->y) +
-                space + std::to_string(wreck->radius) + space + std::to_string(wreck->water) + "\n";
-    }
-    //std::cerr << output;
-    return output;
+void print() {
+    for (int i = 0 ; i < 3 ; i++)
+        std::cout << players[i]->score << std::endl;
+    for (int i = 0 ; i < 3; i++)
+        std::cout << players[i]->rage << std::endl;
+    for (Unit* unit : units)
+        std::cout << unit->id << " " << unit->type << " " << unit->mass
+                  << " " << unit->radius << " " << unit->x << " " << unit->y
+                  << " " << unit->vx << " " << unit->vy << std::endl;
+
 }
 
 class Move {
@@ -1188,7 +1207,6 @@ public:
     int moveType;
     int x;
     int y;
-    int thrust;
 
     Move() {
 
@@ -1197,7 +1215,6 @@ public:
     void randomize() {
         x = fastRandInt(-120, 120);
         y = fastRandInt(-120, 120);
-        thrust = fastRandInt(0, 4);
     }
 
     void mutate(double amplitude) {
@@ -1218,8 +1235,6 @@ public:
         if (maxAmp > 120)
             maxAmp = 120;
         y = fastRandInt(minAmp, maxAmp);
-
-        thrust = fastRandInt(0, 4);
     }
 
 };
@@ -1299,17 +1314,14 @@ public:
         for (int i = 0 ; i < 4; i++) {
             copy->movesReaper[i].x = movesReaper[i].x;
             copy->movesReaper[i].y = movesReaper[i].y;
-            copy->movesReaper[i].thrust = movesReaper[i].thrust;
             //copy->movesReaper[i].moveType = movesReaper[i].moveType;
 
             copy->movesDestroyer[i].x = movesDestroyer[i].x;
             copy->movesDestroyer[i].y = movesDestroyer[i].y;
-            copy->movesDestroyer[i].thrust = movesDestroyer[i].thrust;
             //copy->movesDestroyer[i].moveType = movesDestroyer[i].moveType;
 
             copy->movesDoof[i].x = movesDoof[i].x;
             copy->movesDoof[i].y = movesDoof[i].y;
-            copy->movesDoof[i].thrust = movesDoof[i].thrust;
             //copy->movesDoof[i].moveType = movesDoof[i].moveType;
         }
         copy->score = score;
@@ -1320,17 +1332,14 @@ public:
         for (int i = 0 ; i < 4; i++) {
             movesReaper[i].x = other->movesReaper[i].x;
             movesReaper[i].y = other->movesReaper[i].y;
-            movesReaper[i].thrust = other->movesReaper[i].thrust;
             //movesReaper[i].moveType = other->movesReaper[i].moveType;
 
             movesDestroyer[i].x = other->movesDestroyer[i].x;
             movesDestroyer[i].y = other->movesDestroyer[i].y;
-            movesDestroyer[i].thrust = other->movesDestroyer[i].thrust;
             //movesDestroyer[i].moveType = other->movesDestroyer[i].moveType;
 
             movesDoof[i].x = other->movesDoof[i].x;
             movesDoof[i].y = other->movesDoof[i].y;
-            movesDoof[i].thrust = other->movesDoof[i].thrust;
             //movesDoof[i].moveType = other->movesDoof[i].moveType;
         }
         score = other->score;
@@ -1339,12 +1348,9 @@ public:
 
     void simulate() {
         for (int i = 0; i < 4; i++) {
-            players[0]->looters[0]->setWantedThrust(movesReaper[i].x * 50,
-                                                    movesReaper[i].y * 50, thrustValues[movesReaper[i].thrust]);
-            players[0]->looters[1]->setWantedThrust(movesDestroyer[i].x * 50,
-                                                    movesDestroyer[i].y * 50, thrustValues[movesDestroyer[i].thrust]);
-            players[0]->looters[2]->setWantedThrust(movesDoof[i].x * 50,
-                                                    movesDoof[i].y * 50, thrustValues[movesDoof[i].thrust]);
+            players[0]->looters[0]->setWantedThrust(movesReaper[i].x * 50, movesReaper[i].y * 50, 300);
+            players[0]->looters[1]->setWantedThrust(movesDestroyer[i].x * 50, movesDestroyer[i].y * 50, 300);
+            players[0]->looters[2]->setWantedThrust(movesDoof[i].x * 50, movesDoof[i].y * 50, 300);
             heuristic(players[1]);
             heuristic(players[2]);
             updateGame();
@@ -1357,7 +1363,6 @@ public:
 // ****************************************************************************************
 int main()
 {
-    //TODO: MAKE SURE ORDER DOESN'T MATTER
     //std::ifstream in("~/CLionProjects/MeanMax/input.txt");
     //std::cin.rdbuf(in.rdbuf());
     fast_srand(42);
@@ -1385,7 +1390,6 @@ int main()
     }
 
     Solution* best = new Solution();
-    std::string previous;
     // game loop
     while (true) {
         // ****************************************************************************************
@@ -1416,8 +1420,6 @@ int main()
         std::cin >> enemyRage2; std::cin.ignore();
         int unitCount;
         std::cin >> unitCount; std::cin.ignore();
-
-        std::cerr << "GSEED: " << g_seed << std::endl;
 
         ///*
         std::cerr << myScore << std::endl;
@@ -1499,13 +1501,6 @@ int main()
                 skillEffects.insert(skillEffect);
             }
         }
-
-        std::string thisTurn = print();
-
-        if (turn > 0 && thisTurn.compare(previous) != 0) {
-            std::cerr << "SHOULD BE\n" << thisTurn << std::endl;
-            std::cerr << "BUT I PREDICTED:\n" << previous << std::endl;
-        }
         GLOBAL_ID = tempID + 1;
 
         save(); //SAVING STATE
@@ -1513,8 +1508,6 @@ int main()
         start = NOW;
 
         //TODO: use previous GA solution and modify the last turn randomly
-
-        /*
 
         Solution* base;
 
@@ -1589,7 +1582,7 @@ int main()
 
         tempBest = best;
 
-        double limit = turn ? .043 : .9;
+        double limit = turn ? .041 : .9;
 
 #define LIMIT TIME < limit
 
@@ -1664,12 +1657,9 @@ int main()
 
         reset();
 
-        std::cout << best->movesReaper[0].x * 50 << " " << best->movesReaper[0].y * 50 << " " <<
-                  thrustValues[best->movesReaper[0].thrust] << std::endl;
-        std::cout << best->movesDestroyer[0].x * 50 << " " << best->movesDestroyer[0].y * 50 <<
-                  " " << thrustValues[best->movesDestroyer[0].thrust] << std::endl;
-        std::cout << best->movesDoof[0].x * 50 << " " << best->movesDoof[0].y * 50 << " "
-                  << thrustValues[best->movesDoof[0].thrust] << std::endl;
+        std::cout << best->movesReaper[0].x * 50 << " " << best->movesReaper[0].y * 50 << " " << 300 << std::endl;
+        std::cout << best->movesDestroyer[0].x * 50 << " " << best->movesDestroyer[0].y * 50 << " " << 300 << std::endl;
+        std::cout << best->movesDoof[0].x * 50 << " " << best->movesDoof[0].y * 50 << " " << 300 << std::endl;
 
         std::cerr << "Counter: " << counter << std::endl;
 
@@ -1679,38 +1669,9 @@ int main()
         delete [] pool;
         delete [] newPool;
 
-         */
-
-        reset();
-
-        reset();
-
-        for (Player* player : players)
-            heuristic(player);
-
-        updateGame();
-
-        previous = print();
-
-        //std::cerr << previous;
-
-        reset();
-
-        //if (turn > 0 && print().compare(thisTurn) != 0)
-            //throw;
 
         turn += 1;
 
-        std::cout << players[0]->looters[0]->wantedThrustTarget.x << " " << players[0]->looters[0]->wantedThrustTarget.y
-                  << " " << 300 << std::endl;
-
-        if (players[0]->looters[1]->attempt == Action::SKILL)
-            std::cout << "SKILL " << players[0]->looters[1]->wantedThrustTarget.x << " "
-                      << players[0]->looters[1]->wantedThrustTarget.y << std::endl;
-        else
-            std::cout << players[0]->looters[1]->wantedThrustTarget.x << " " << players[0]->looters[1]->wantedThrustTarget.y
-                  << " " << 300 << std::endl;
-        std::cout << "0 0 300" << std::endl;
 
         // Write an action using cout. DON'T FORGET THE "<< endl"
         // To debug: cerr << "Debug messages..." << endl;
