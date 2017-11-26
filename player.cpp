@@ -1322,7 +1322,8 @@ void heuristic(Player* player) { //Sets player moves based on heuristic
 
     Wreck* closest = nullptr;
     for (Wreck* wreck : wrecks) {
-        dist2 = dist(player->looters[0], wreck);
+        dist2 = dist(wreck, player->looters[0]->x + player->looters[0]->vx,
+                     player->looters[0]->y + player->looters[0]->vy);
         if (dist2 < dist1) {
             closest = wreck;
             dist1 = dist2;
@@ -1399,26 +1400,48 @@ int scoreState() {
     score -= 25000 * (players[1]->score + players[2]->score);
     score += players[0]->rage * 50;
     if (players[1]->score > players[2]->score)
-        score -= (int)(dist(players[0]->looters[2], players[1]->looters[0]));
+        score -= (int)(dist(players[1]->looters[0], players[0]->looters[2]->x + players[0]->looters[2]->vx,
+                            players[0]->looters[2]->y + players[0]->looters[2]->vy));
     else
-        score -= (int)(dist(players[0]->looters[2], players[2]->looters[0]));
+        score -= (int)(dist(players[2]->looters[0], players[0]->looters[2]->x + players[0]->looters[2]->vx,
+                            players[0]->looters[2]->y + players[0]->looters[2]->vy));
     double dist1;
     double dist2;
     dist1 = 50000;
     Wreck* target = nullptr;
     for (Wreck* wreck : wrecks) {
-        dist2 = dist(players[0]->looters[0], wreck);
+        dist2 = dist(wreck, players[0]->looters[0]->x + players[0]->looters[0]->vx,
+                     players[0]->looters[0]->y + players[0]->looters[0]->vy);
         score += (int)(wreck->water * (12000 - dist2) * .1);
         if (dist2 < dist1) {
             target = wreck;
             dist1 = dist2;
         }
     }
-    if (dist1 == 50000)
-        dist1 = dist(players[0]->looters[0], players[0]->looters[1]);
+    if (dist1 == 50000) {
+        Tanker* targ = nullptr;
+        for (Tanker* tanker : tankers) {
+            for (int i = 0 ; i < 3; ++i) {
+                dist2 = dist(tanker, players[i]->looters[1]->x + players[i]->looters[1]->vx,
+                             players[i]->looters[1]->y + players[i]->looters[1]->vy);
+                if (dist2 < dist1) {
+                    targ = tanker;
+                    dist1 = dist2;
+                }
+            }
+        }
+        if (targ)
+            dist1 = dist(targ, players[0]->looters[0]->x + players[0]->looters[0]->vx,
+                         players[0]->looters[0]->y + players[0]->looters[0]->vy);
+        else
+            dist1 = dist(players[0]->looters[0], players[0]->looters[1]);
+    }
     else
-        dist1 -= dist(players[1]->looters[0], target) + dist(players[2]->looters[0], target);
-    score -= (int)dist1;
+        dist1 -= dist(target, players[1]->looters[0]->x + players[1]->looters[0]->vx,
+                      players[1]->looters[0]->y + players[1]->looters[0]->vy) +
+                dist(target, players[1]->looters[0]->x + players[1]->looters[0]->vx,
+                     players[1]->looters[0]->y + players[1]->looters[0]->vy);
+    score -= (int)dist1 * 2;
 //    dist1 = 50000;
 //    for (Tanker* tanker : tankers) {
 //        dist2 = dist(players[0]->looters[1], tanker);
