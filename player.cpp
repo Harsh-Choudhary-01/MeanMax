@@ -255,18 +255,22 @@ public:
     Unit* a;
     Unit* b;
 
-    Collision(double t) : t(t) , a(nullptr) , b(nullptr) {
+    Collision() {
 
     }
 
-    Collision(double t, Unit* a) : t(t), a(a), b(nullptr) {
-
+    Collision* update(double t, Unit* a) {
+        b = nullptr;
+        this->t = t;
+        this->a = a;
+        return this;
     }
 
-    Collision(double t, Unit* a, Unit* b) {
+    Collision* update(double t, Unit* a, Unit* b) {
         this->t = t;
         this->a = a;
         this->b = b;
+        return this;
     }
 
 };
@@ -276,7 +280,6 @@ public:
 // Center of the map
 Point WATERTOWN(0, 0);
 
-Collision NULL_COLLISION(1.0 + EPSILON);
 double NULL_COLLISION_TIME = 1.0 + EPSILON;
 
 // ****************************************************************************************
@@ -335,6 +338,9 @@ public:
 
 };
 
+// ****************************************************************************************
+Collision** collisionsCache;
+int collisionsCacheFE = 0;
 // ****************************************************************************************
 
 //TODO: may need to write equals and hash functions
@@ -411,40 +417,42 @@ public:
         }
     }
 
-    virtual double getCollision() { //why not just return time and already know other stuff
-        if (dist(this, &WATERTOWN) + radius >= MAP_RADIUS)
-            return 0;
+    virtual Collision* getCollision(double from) { //why not just return time and already know other stuff
+//        if (dist(this, &WATERTOWN) + radius >= MAP_RADIUS)
+//            return collisionsCache[collisionsCacheFE++]->update(0, this);
 
         if (vx == 0.0 && vy == 0.0)
-            return NULL_COLLISION_TIME;
+            return nullptr;
 
         double a = vx * vx + vy * vy;
 
         if (a <= 0.0)
-            return NULL_COLLISION_TIME;
+            return nullptr;
 
         double b = 2.0 * (x * vx + y * vy);
         double c = x * x + y * y - (MAP_RADIUS - radius) * (MAP_RADIUS - radius);
         double delta = b * b - 4.0 * a * c;
 
         if (delta <= 0.0)
-            return NULL_COLLISION_TIME;
+            return nullptr;
 
         double t = (-b + sqrt(delta)) / (2.0 * a);
 
-        if (t <= 0.0)
-            return NULL_COLLISION_TIME;
+        t += from;
 
-        return t;
+        if (t <= 0.0 || t > 1.0)
+            return nullptr;
+
+        return collisionsCache[collisionsCacheFE++]->update(t, this);
     }
 
-    double getCollision(Unit* u) {
+    Collision* getCollision(Unit* u, double from) {
 
-        if (dist(this, u) <= radius + u->radius)
-            return 0;
+//        if (dist(this, u) <= radius + u->radius)
+//            return collisionsCache[collisionsCacheFE++]->update(0, this, u);
 
         if (vx == 0.0 && vy == 0.0 && u->vx == 0.0 && u->vy == 0.0)
-            return NULL_COLLISION_TIME;
+            return nullptr;
 
         double x2 = x - u->x;
         double y2 = y - u->y;
@@ -455,23 +463,26 @@ public:
         double a = vx2 * vx2 + vy2 * vy2;
 
         if (a <= 0.0)
-            return NULL_COLLISION_TIME;
+            return nullptr;
 
         double b = 2.0 * (x2 * vx2 + y2 * vy2);
         double c = x2 * x2 + y2 * y2 - r2 * r2;
         double delta = b * b - 4.0 * a * c;
 
         if (delta < 0.0)
-            return NULL_COLLISION_TIME;
+            return nullptr;
 
         double t = (-b - sqrt(delta)) / (2.0 * a);
 
-        bool test = t < EPSILON;
-
         if (t <= 0.0)
-            return NULL_COLLISION_TIME;
+            return nullptr;
 
-        return t;
+        t += from;
+
+        if (t > 1.0)
+            return nullptr;
+
+        return collisionsCache[collisionsCacheFE++]->update(t, this, u);
     }
 
     void bounce(Unit* u) {
@@ -510,12 +521,12 @@ public:
         u->vx += fx * m2c;
         u->vy += fy * m2c;
 
-        double diff = (dist(this, u) - radius - u->radius) / 2.0;
-        if (diff <= 0.0) {
-            // Unit overlapping. Fix positions.
-            moveTo(this, u, diff - EPSILON);
-            moveTo(u, this, diff - EPSILON);
-        }
+//        double diff = (dist(this, u) - radius - u->radius) / 2.0;
+//        if (diff <= 0.0) {
+//            // Unit overlapping. Fix positions.
+//            moveTo(this, u, diff - EPSILON);
+//            moveTo(u, this, diff - EPSILON);
+//        }
     }
 
     void bounce() {
@@ -543,11 +554,11 @@ public:
         vx -= fx * mcoeff;
         vy -= fy * mcoeff;
 
-        double diff = dist(this, &WATERTOWN) + radius - MAP_RADIUS;
-        if (diff >= 0.0) {
-            // Unit still outside of the map, reposition it
-            moveTo(this, &WATERTOWN, diff + EPSILON);
-        }
+//        double diff = dist(this, &WATERTOWN) + radius - MAP_RADIUS;
+//        if (diff >= 0.0) {
+//            // Unit still outside of the map, reposition it
+//            moveTo(this, &WATERTOWN, diff + EPSILON);
+//        }
     }
 
 };
@@ -601,8 +612,8 @@ public:
             thrust(&WATERTOWN, TANKER_THRUST);
     }
 
-    double getCollision() {
-        return NULL_COLLISION_TIME;
+    Collision* getCollision(double from) {
+        return nullptr;
     }
 
 };
@@ -626,9 +637,9 @@ public:
     }
 
     SkillEffect* skill(Point* p);
-    
+
     SkillEffect* skill(int x, int y);
-    
+
     virtual SkillEffect* skillImpl(int x, int y) {
         return nullptr;
     }
@@ -688,7 +699,7 @@ public:
     }
 
     SkillEffect* skillImpl(Point* p);
-    
+
     SkillEffect* skillImpl(int x, int y);
 
     int sing() {
@@ -893,20 +904,25 @@ std::set<SkillEffect*, SkillEffectComparator> skillEffects;
 std::vector<Tanker*> tankers;
 std::vector<Wreck*> wrecks;
 int turn = 0;
-Unit* aObject = nullptr;
-Unit* bObject = nullptr;
+Collision** collisions;
+int collisionsFE = 0;
+Collision** tempCollisions;
+int tempCollisionsFE = 0;
+Collision* fake;
 // ****************************************************************************************
 //GLOBAL METHODS
 
-Tanker* dead() {
-    if (aObject->type == LOOTER_DESTROYER && bObject->type == TYPE_TANKER && bObject->mass < REAPER_SKILL_MASS_BONUS) {
-        return dynamic_cast<Tanker*>(bObject);
+Tanker* dead(Unit* a, Unit* b) {
+    if (a->type == LOOTER_DESTROYER && b->type == TYPE_TANKER && b->mass < REAPER_SKILL_MASS_BONUS) {
+        return dynamic_cast<Tanker*>(b);
     }
-    if (bObject->type == LOOTER_DESTROYER && aObject->type == TYPE_TANKER && aObject->mass < REAPER_SKILL_MASS_BONUS) {
-        return dynamic_cast<Tanker*>(aObject);
+    if (b->type == LOOTER_DESTROYER && a->type == TYPE_TANKER && a->mass < REAPER_SKILL_MASS_BONUS) {
+        return dynamic_cast<Tanker*>(a);
     }
     return nullptr;
 }
+
+/*
 
 double getNextCollision() {
     double result = NULL_COLLISION_TIME;
@@ -957,6 +973,31 @@ void playCollision() {
     }
 }
 
+ */
+
+bool mustErase(Collision* col, Unit* a, Unit* b) {
+    if (a->id == col->a->id)
+        return true;
+
+    if (b != nullptr && col->b != nullptr) {
+        if (a->id == col->b->id
+            || b->id == col->a->id
+            || b->id == col->b->id) {
+            return true;
+        }
+    } else if (b != nullptr) {
+        if (b->id == col->a->id) {
+            return true;
+        }
+    } else if (col->b != nullptr) {
+        if (a->id == col->b->id) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void updateGame() {
     for (SkillEffect* effect : skillEffects) { //TODO: skillEffects need to be ordered
         effect->apply(units);
@@ -973,6 +1014,169 @@ void updateGame() {
     }
 
     double t = 0.0;
+    double delta;
+
+    Collision* next = fake;
+    collisionsCacheFE = 0;
+    collisionsFE = 0;
+    tempCollisionsFE = 0;
+
+    Collision* col;
+    Unit* a;
+    Unit* b;
+    Unit* u;
+    int i, j;
+    bool aNotTanker;
+    bool bNotTanker;
+
+    for (i = 0; i < units.size(); ++i) {
+        a = units[i];
+
+        col = a->getCollision(t);
+
+        if (col) {
+            collisions[collisionsFE++] = col;
+
+            if (col->t < next->t)
+                next = col;
+        }
+
+        for (j = i + 1; j < units.size(); ++j) {
+            b = units[j];
+
+            col = a->getCollision(b, t);
+
+            if (col) {
+                collisions[collisionsFE++] = col;
+
+                if (col->t < next->t)
+                    next = col;
+            }
+        }
+    }
+
+    while (t < 1.0) {
+        if (next == fake) {
+            for (i = 0; i < units.size(); ++i)
+                units[i]->move(1.0 - t);
+            break;
+        }
+        else {
+            delta = next->t - t;
+
+            for (i = 0; i < units.size(); ++i)
+                units[i]->move(delta);
+
+            t = next->t;
+
+            aNotTanker = bNotTanker = true;
+
+            if (next->b == nullptr)
+                next->a->bounce();
+
+            else {
+                Tanker* deadTanker = dead(next->a, next->b);
+
+                if (deadTanker != nullptr) {
+                    aNotTanker = a != deadTanker;
+                    bNotTanker = b != deadTanker;
+                    tankers.erase(std::remove(tankers.begin(), tankers.end(), deadTanker), tankers.end());
+                    units.erase(std::remove(units.begin(), units.end(), (Unit *) deadTanker), units.end());
+
+                    Wreck *wreck = deadTanker->die();
+
+                    if (wreck != nullptr)
+                        wrecks.push_back(wreck);
+                }
+                else
+                    next->a->bounce(next->b);
+            }
+
+            a = next->a;
+            b = next->b;
+
+            next = fake;
+
+            for (i = 0; i < collisionsFE; ++i) {
+                col = collisions[i];
+
+                if (!mustErase(col, a, b)) {
+                    if (col->t < next->t)
+                        next = col;
+
+                    tempCollisions[tempCollisionsFE++] = col;
+                }
+            }
+
+            Collision** temp = tempCollisions;
+            tempCollisions = collisions;
+            collisions = temp;
+
+            collisionsFE = tempCollisionsFE;
+            tempCollisionsFE = 0;
+
+            if (aNotTanker) {
+
+                col = a->getCollision(t);
+
+                if (col) {
+                    collisions[collisionsFE++] = col;
+
+                    if (col->t < next->t) {
+                        next = col;
+                    }
+                }
+
+                for (i = 0; i < units.size(); ++i) {
+                    u = units[i];
+
+                    if (a->id != u->id) {
+                        col = a->getCollision(u, t);
+
+                        if (col) {
+                            collisions[collisionsFE++] = col;
+
+                            if (col->t < next->t) {
+                                next = col;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Find new collisions for b
+            if (bNotTanker && b) {
+                col = b->getCollision(t);
+
+                if (col) {
+                    collisions[collisionsFE++] = col;
+
+                    if (col->t < next->t) {
+                        next = col;
+                    }
+                }
+
+                for (i = 0; i < units.size(); ++i) {
+                    u = units[i];
+
+                    if (b->id != u->id) {
+                        col = b->getCollision(u, t);
+
+                        if (col) {
+                            collisions[collisionsFE++] = col;
+
+                            if (col->t < next->t) {
+                                next = col;
+                            }
+                        }
+                    }
+                }
+            }
+
+        }
+    }
+
+    /*
 
     double collision = getNextCollision();
 
@@ -990,6 +1194,8 @@ void updateGame() {
     for (Unit* unit : units) {
         unit->move(delta);
     }
+
+     */
 
     //UPDATE TANKER LIST lines 1393-1411 on ref
     std::unordered_set<Unit*, UnitHasher, UnitComparator> tankersToRemove;
@@ -1188,19 +1394,30 @@ void heuristic(Player* player) { //Sets player moves based on heuristic
 }
 
 int scoreState() {
-    int score = players[0]->score - players[1]->score - players[2]->score;
-    score *= 3000;
-    double dist1 = dist(players[0]->looters[2], players[1]->looters[0]);
-    double dist2 = dist(players[0]->looters[2], players[2]->looters[0]);
-    score -= (int)(dist1 < dist2 ? dist1 : dist2);
+    int score = 0;
+    score += 50000 * players[0]->score;
+    score -= 25000 * (players[1]->score + players[2]->score);
+    score += players[0]->rage * 50;
+    if (players[1]->score > players[2]->score)
+        score -= (int)(dist(players[0]->looters[2], players[1]->looters[0]));
+    else
+        score -= (int)(dist(players[0]->looters[2], players[2]->looters[0]));
+    double dist1;
+    double dist2;
     dist1 = 50000;
+    Wreck* target = nullptr;
     for (Wreck* wreck : wrecks) {
-        score += (int)(wreck->water * (12000 - dist(players[0]->looters[0], wreck)) * .1);
         dist2 = dist(players[0]->looters[0], wreck);
-        dist1 = (dist1 < dist2 ? dist1 : dist2);
+        score += (int)(wreck->water * (12000 - dist2) * .1);
+        if (dist2 < dist1) {
+            target = wreck;
+            dist1 = dist2;
+        }
     }
     if (dist1 == 50000)
         dist1 = dist(players[0]->looters[0], players[0]->looters[1]);
+    else
+        dist1 -= dist(players[1]->looters[0], target) + dist(players[2]->looters[0], target);
     score -= (int)dist1;
 //    dist1 = 50000;
 //    for (Tanker* tanker : tankers) {
@@ -1396,6 +1613,18 @@ int main()
     //std::ifstream in("~/CLionProjects/MeanMax/input.txt");
     //std::cin.rdbuf(in.rdbuf());
     fast_srand(42);
+
+    fake = new Collision();
+    fake->t = 1000.0;
+
+    collisionsCache = new Collision*[3000];
+    collisions = new Collision*[3000];
+    tempCollisions = new Collision*[3000];
+
+    for (int i = 0; i < 3000; ++i) {
+        collisionsCache[i] = new Collision();
+    }
+
     for (int i = 0 ; i < 3; i++) {
         players[i] = new Player(i);
     }
@@ -1451,7 +1680,9 @@ int main()
         int unitCount;
         std::cin >> unitCount; std::cin.ignore();
 
-        ///*
+        start = NOW;
+
+        /*
         std::cerr << myScore << std::endl;
         std::cerr << enemyScore1 << std::endl;
         std::cerr << enemyScore2 << std::endl;
@@ -1481,7 +1712,7 @@ int main()
             int extra;
             int extra2;
             std::cin >> unitId >> unitType >> player >> mass >> radius >> x >> y >> vx >> vy >> extra >> extra2; std::cin.ignore();
-            ///*
+            /*
             std::cerr << unitId << " " << unitType << " " << player << " " << mass << " " << radius << " " << x << " " <<
                       y << " " << vx << " " << vy << " " << extra << " " << extra2 << std::endl;
             //*/
@@ -1531,11 +1762,27 @@ int main()
                 skillEffects.insert(skillEffect);
             }
         }
+
         GLOBAL_ID = tempID + 1;
 
         save(); //SAVING STATE
 
-        start = NOW;
+        Wreck* target = nullptr;
+        if (players[0]->rage > 30) {
+            for (Wreck *wreck : wrecks) {
+                if (dist(players[0]->looters[0], wreck) < wreck->radius || dist(players[0]->looters[2], wreck) > 2000)
+                    continue;
+                if (dist(players[1]->looters[0], wreck) < wreck->radius &&
+                    !players[1]->looters[0]->isInDoofSkill(skillEffects)) {
+                    target = wreck;
+                    break;
+                } else if (dist(players[2]->looters[0], wreck) < wreck->radius &&
+                           !players[2]->looters[0]->isInDoofSkill(skillEffects)) {
+                    target = wreck;
+                    break;
+                }
+            }
+        }
 
         //TODO: use previous GA solution and modify the last turn randomly
 
@@ -1612,7 +1859,7 @@ int main()
 
         tempBest = best;
 
-        double limit = turn ? .041 : .9;
+        double limit = turn ? .041 : .93;
 
 #define LIMIT TIME < limit
 
@@ -1684,25 +1931,6 @@ int main()
             tempBest = best;
 
         }
-
-        Wreck* target = nullptr;
-        if (players[0]->rage > 30) {
-            for (Wreck *wreck : wrecks) {
-                if (dist(players[0]->looters[0], wreck) < wreck->radius || dist(players[0]->looters[2], wreck) > 2000)
-                    continue;
-                if (dist(players[1]->looters[0], wreck) < wreck->radius &&
-                    !players[1]->looters[0]->isInDoofSkill(skillEffects)) {
-                    target = wreck;
-                    break;
-                } else if (dist(players[2]->looters[0], wreck) < wreck->radius &&
-                           !players[2]->looters[0]->isInDoofSkill(skillEffects)) {
-                    target = wreck;
-                    break;
-                }
-            }
-        }
-
-        reset();
 
         std::cout << best->movesReaper[0].x * 50 << " " << best->movesReaper[0].y * 50 << " " << 300 << std::endl;
         std::cout << best->movesDestroyer[0].x * 50 << " " << best->movesDestroyer[0].y * 50 << " " << 300 << std::endl;
