@@ -909,6 +909,7 @@ int collisionsFE = 0;
 Collision** tempCollisions;
 int tempCollisionsFE = 0;
 Collision* fake;
+int targetLength;
 // ****************************************************************************************
 //GLOBAL METHODS
 
@@ -1398,7 +1399,7 @@ int scoreState() {
     int score = 0;
     score += 50000 * players[0]->score;
     score -= 25000 * (players[1]->score + players[2]->score);
-    score += players[0]->rage * 50;
+    score += players[0]->rage * 315;
     if (players[1]->score > players[2]->score)
         score -= (int)(dist(players[1]->looters[0], players[0]->looters[2]->x + players[0]->looters[2]->vx,
                             players[0]->looters[2]->y + players[0]->looters[2]->vy));
@@ -1511,6 +1512,9 @@ public:
     Move movesDestroyer[4];
     Move movesDoof[4];
     int score;
+    int skillType; //what
+    int skillTarget; //where
+    int skillRound; //when
 
     Solution() {
         movesDestroyer[0].rage = 60;
@@ -1520,6 +1524,10 @@ public:
     }
 
     void randomize() {
+        //0: Reaper skill. 1: Destroyer skill 2: Doof skill 3: no skill. Adjust this to change probabilities of skills
+        skillType = fastRandInt(3);
+        skillTarget = fastRandInt(wrecks.size() + units.size());
+        skillRound = fastRandInt(8);
         for (Move& move : movesReaper)
             move.randomize();
         for (Move& move : movesDestroyer)
@@ -1564,6 +1572,22 @@ public:
             else
                 child->movesDestroyer[i] = movesDestroyer[i];
         }
+
+        if (fastRandInt(2))
+            child->skillRound = skillRound;
+        else
+            child->skillRound = other->skillRound;
+
+        if (fastRandInt(2))
+            child->skillTarget = skillTarget;
+        else
+            child->skillTarget = other->skillTarget;
+
+        if (fastRandInt(2))
+            child->skillType = skillType;
+        else
+            child->skillType = other->skillType;
+
         return child;
     }
 
@@ -1585,6 +1609,9 @@ public:
             copy->movesDoof[i] = movesDoof[i];
         }
         copy->score = score;
+        copy->skillType = skillType;
+        copy->skillTarget = skillTarget;
+        copy->skillRound = skillRound;
         return copy;
     }
 
@@ -1594,37 +1621,42 @@ public:
             movesDestroyer[i] = other->movesDestroyer[i];
             movesDoof[i] = other->movesDoof[i];
         }
+        skillType = other->skillType;
+        skillTarget = other->skillTarget;
+        skillRound = other->skillRound;
         score = other->score;
     }
 
 
     void simulate() {
+
         for (int i = 0; i < 4; i++) {
-            if (movesReaper[i].isSkill) {
-                SkillEffect* effect = players[0]->looters[0]->skill(movesReaper[i].x * 50, movesReaper[i].y * 50);
+
+            players[0]->looters[0]->setWantedThrust(movesReaper[i].x * 50, movesReaper[i].y * 50, 300);
+            players[0]->looters[1]->setWantedThrust(movesDestroyer[i].x * 50, movesDestroyer[i].y * 50, 300);
+            players[0]->looters[2]->setWantedThrust(movesDoof[i].x * 50, movesDoof[i].y * 50, 300);
+
+            if (skillRound == i && skillTarget < units.size() + wrecks.size()) {
+                Point* skillTargetPoint;
+
+                if (skillTarget < units.size())
+                    skillTargetPoint = units[skillTarget];
+                else
+                    skillTargetPoint = wrecks[skillTarget - units.size()];
+
+                players[0]->looters[skillType]->attempt = Action::SKILL;
+
+                SkillEffect* effect = players[0]->looters[skillType]->skill(skillTargetPoint);
+
                 if (effect != nullptr)
                     skillEffects.insert(effect);
             }
-            else
-                players[0]->looters[0]->setWantedThrust(movesReaper[i].x * 50, movesReaper[i].y * 50, 300);
-            if (movesDestroyer[i].isSkill) {
-                SkillEffect* effect = players[0]->looters[1]->skill(movesDestroyer[i].x * 50, movesDestroyer[i].y * 50);
-                if (effect != nullptr)
-                    skillEffects.insert(effect);
-            }
-            else
-                players[0]->looters[1]->setWantedThrust(movesDestroyer[i].x * 50, movesDestroyer[i].y * 50, 300);
-            if (movesDoof[i].isSkill) {
-                SkillEffect* effect = players[0]->looters[2]->skill(movesDoof[i].x * 50, movesDoof[i].y * 50);
-                if (effect != nullptr)
-                    skillEffects.insert(effect);
-            }
-            else
-                players[0]->looters[2]->setWantedThrust(movesDoof[i].x * 50, movesDoof[i].y * 50, 300);
+
             heuristic(players[1]);
             heuristic(players[2]);
             updateGame();
         }
+
         score = scoreState();
         reset();
     }
@@ -1705,7 +1737,7 @@ int main()
 
         start = NOW;
 
-        /*
+        ///*
         std::cerr << myScore << std::endl;
         std::cerr << enemyScore1 << std::endl;
         std::cerr << enemyScore2 << std::endl;
@@ -1735,7 +1767,7 @@ int main()
             int extra;
             int extra2;
             std::cin >> unitId >> unitType >> player >> mass >> radius >> x >> y >> vx >> vy >> extra >> extra2; std::cin.ignore();
-            /*
+            ///*
             std::cerr << unitId << " " << unitType << " " << player << " " << mass << " " << radius << " " << x << " " <<
                       y << " " << vx << " " << vy << " " << extra << " " << extra2 << std::endl;
             //*/
@@ -1818,6 +1850,16 @@ int main()
                 base->movesReaper[j - 1] = best->movesReaper[j];
                 base->movesDestroyer[j - 1] = best->movesDestroyer[j];
                 base->movesDoof[j - 1] = best->movesDoof[j];
+
+                base->skillRound = best->skillRound;
+                base->skillType = best->skillType;
+                base->skillTarget = best->skillTarget;
+
+                if (base->skillRound == 0)
+                    base->skillRound = 7;
+                else
+                    base->skillRound -= 1;
+
             }
 
             delete best;
@@ -1955,10 +1997,26 @@ int main()
 
         }
 
-        std::cout << best->movesReaper[0].x * 50 << " " << best->movesReaper[0].y * 50 << " " << 300 << std::endl;
-        std::cout << best->movesDestroyer[0].x * 50 << " " << best->movesDestroyer[0].y * 50 << " " << 300 << std::endl;
-        if (target != nullptr)
-            std::cout << "SKILL " << target->x << " " << target->y << std::endl;
+        Point* skillTarget;
+
+        if (best->skillTarget < units.size())
+            skillTarget = units[best->skillTarget];
+        else if (best->skillTarget < units.size() + wrecks.size())
+            skillTarget = wrecks[best->skillTarget - units.size()];
+
+        if (best->skillRound == 0 && best->skillType == 0)
+            std::cout << "SKILL " << (int)skillTarget->x << " " << (int)skillTarget->y << std::endl;
+        else
+            std::cout << best->movesReaper[0].x * 50 << " " << best->movesReaper[0].y * 50 << " " << 300 << std::endl;
+
+        if (best->skillRound == 0 && best->skillType == 1)
+            std::cout << "SKILL " << (int)skillTarget->x << " " << (int)skillTarget->y << std::endl;
+        else
+            std::cout << best->movesDestroyer[0].x * 50 << " " << best->movesDestroyer[0].y * 50 << " " << 300 << std::endl;
+
+
+        if (best->skillRound == 0 && best->skillType == 2)
+            std::cout << "SKILL " << (int)skillTarget->x << " " << (int)skillTarget->y << std::endl;
         else
             std::cout << best->movesDoof[0].x * 50 << " " << best->movesDoof[0].y * 50 << " " << 300 << std::endl;
 
