@@ -1321,6 +1321,8 @@ void heuristic(Player* player) { //Sets player moves based on heuristic
     double dist1 = 50000;
     double dist2 = 0;
 
+    Wreck* target = nullptr;
+
     Wreck* closest = nullptr;
     for (Wreck* wreck : wrecks) {
         dist2 = dist(wreck, player->looters[0]->x + player->looters[0]->vx,
@@ -1328,6 +1330,19 @@ void heuristic(Player* player) { //Sets player moves based on heuristic
         if (dist2 < dist1) {
             closest = wreck;
             dist1 = dist2;
+        }
+
+        if (player->rage < 30 || dist(player->looters[0], wreck) < wreck->radius || dist(player->looters[2], wreck) > 2000)
+            continue;
+
+        for (Player* otherPlayer : players) {
+            if (player->index == otherPlayer->index)
+                continue;
+            if (dist(otherPlayer->looters[0], wreck) < wreck->radius &&
+                !otherPlayer->looters[0]->isInDoofSkill(skillEffects)) {
+                target = wreck;
+                break;
+            }
         }
     }
 
@@ -1392,7 +1407,15 @@ void heuristic(Player* player) { //Sets player moves based on heuristic
         }
     }
 
-    player->looters[2]->setWantedThrust(targetReaper->looters[0]->x, targetReaper->looters[0]->y, 300);
+    if (target != nullptr) {
+        player->looters[2]->attempt = Action::SKILL;
+        SkillEffect* effect = player->looters[2]->skill(target);
+        if (effect != nullptr) {
+            skillEffects.insert(effect);
+        }
+    }
+    else
+        player->looters[2]->setWantedThrust(targetReaper->looters[0]->x, targetReaper->looters[0]->y, 300);
 }
 
 int scoreState() {
@@ -1554,7 +1577,7 @@ public:
             move.mutate(amplitude);
         for (Move& move : movesDoof)
             move.mutate(amplitude);
-        int num = fastRandInt(4);
+        int num = fastRandInt(6);
         if (num == 0)
             skillType = fastRandInt(3);
         else if (num == 1)
@@ -1828,23 +1851,6 @@ int main()
         GLOBAL_ID = tempID + 1;
 
         save(); //SAVING STATE
-
-        Wreck* target = nullptr;
-        if (players[0]->rage > 30) {
-            for (Wreck *wreck : wrecks) {
-                if (dist(players[0]->looters[0], wreck) < wreck->radius || dist(players[0]->looters[2], wreck) > 2000)
-                    continue;
-                if (dist(players[1]->looters[0], wreck) < wreck->radius &&
-                    !players[1]->looters[0]->isInDoofSkill(skillEffects)) {
-                    target = wreck;
-                    break;
-                } else if (dist(players[2]->looters[0], wreck) < wreck->radius &&
-                           !players[2]->looters[0]->isInDoofSkill(skillEffects)) {
-                    target = wreck;
-                    break;
-                }
-            }
-        }
 
         //TODO: use previous GA solution and modify the last turn randomly
 
