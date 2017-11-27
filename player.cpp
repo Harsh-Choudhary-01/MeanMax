@@ -1554,6 +1554,13 @@ public:
             move.mutate(amplitude);
         for (Move& move : movesDoof)
             move.mutate(amplitude);
+        int num = fastRandInt(4);
+        if (num == 0)
+            skillType = fastRandInt(3);
+        else if (num == 1)
+            skillTarget = fastRandInt(wrecks.size() + units.size());
+        else if (num == 2)
+            skillRound = fastRandInt(8);
     }
 
     Solution* merge(Solution* other) {
